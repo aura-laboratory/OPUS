@@ -26,10 +26,21 @@ def main():
     evaluation.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.command == "serve":
+        import httpx
+        url = f"http://127.0.0.1:{args.port}"
+        try:
+            health = httpx.get(url + "/api/health", timeout=1, trust_env=False)
+            if health.is_success and health.json().get("local_only"):
+                print(f"OPUS is already running at {url}. Use stop.ps1 to stop this project's service.")
+                if not args.no_browser:
+                    webbrowser.open(url)
+                return
+        except (httpx.HTTPError, ValueError):
+            pass
         import uvicorn
         from opus_rl.app.server import create_app
         if not args.no_browser:
-            timer = threading.Timer(1.5, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}"))
+            timer = threading.Timer(1.5, lambda: webbrowser.open(url))
             timer.daemon = True
             timer.start()
         uvicorn.run(create_app(args.runs_root), host="127.0.0.1", port=args.port)

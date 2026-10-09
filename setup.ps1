@@ -3,6 +3,11 @@ $ErrorActionPreference = "Stop"
 $opusRoot = $PSScriptRoot
 $opusPrefix = Join-Path $opusRoot ".conda"
 if (-not (Test-Path -LiteralPath (Join-Path $opusPrefix "python.exe"))) {
+    if (-not (Get-Command $Conda -ErrorAction SilentlyContinue)) {
+        $opusCondaCandidate = Join-Path $env:USERPROFILE "miniconda3\Scripts\conda.exe"
+        if (Test-Path -LiteralPath $opusCondaCandidate) { $Conda = $opusCondaCandidate }
+        else { throw "Conda was not found. Pass its executable path with -Conda." }
+    }
     & $Conda create --prefix $opusPrefix --override-channels --channel conda-forge python=3.11 pip -y
     if ($LASTEXITCODE -ne 0) { throw "Conda environment creation failed." }
 }

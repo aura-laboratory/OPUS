@@ -31,6 +31,7 @@ class Profile:
     phases: list[Phase]
     reach_time: float
     distance: float
+    end_acceleration: float = 0.0
 
     def sample(self, t):
         position = 0.0
@@ -40,7 +41,10 @@ class Profile:
             velocity = phase.velocity + phase.acceleration * elapsed
             t -= elapsed
             if t <= 1e-10:
-                return position, velocity, phase.acceleration if elapsed < phase.duration - 1e-9 else 0.0
+                acceleration = phase.acceleration if elapsed < phase.duration - 1e-9 else (
+                    self.end_acceleration if phase is self.phases[-1] else 0.0
+                )
+                return position, velocity, acceleration
         return position, 0.0, 0.0
 
 
@@ -68,7 +72,8 @@ def profile(distance, vmax, amax, duration, v0=0.0):
             break
     if left > 1e-10:
         phases.append(Phase(left, 0, 0))
-    return Profile(phases, reach_time, distance)
+    end_acceleration = phases[-1].acceleration if reach_time > duration + 1e-9 else 0.0
+    return Profile(phases, reach_time, distance, end_acceleration)
 
 
 def direction_limits(direction, spec):

@@ -45,6 +45,7 @@
     <details class="group"><summary>MAPPO parameters</summary><div id="ppo-fields" class="fields"></div></details>
     <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop & save</button></div>
     <div id="training-progress" class="group"><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p></div>
+    <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"><p class="muted">Metrics appear after the first rollout.</p></div></details>
     <p class="hint">An episode of 1,000 decisions represents 83 min 20 sec of simulated time at 5 s per decision. Training runs as fast as the computer calculates.</p>
   </section>
   <section id="runs-controls" hidden>
@@ -62,6 +63,7 @@
     <label class="sr-only" for="simulation-policy">Simulation policy</label><select id="simulation-policy"><option value="heuristic">Sweep baseline</option><option value="random">Random actions</option><option value="model">Loaded model</option></select>
     <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button></div>
   <div class="metrics"><div><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div><span>Lowest 10%</span><strong id="metric-p10">0.000</strong></div><div><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div><span>Step reward</span><strong id="metric-reward">0.000</strong></div></div>
+  <div id="safety-metrics" class="muted">Energy and safety update with each decision.</div>
   <div id="charts" hidden><div><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage by training step"></canvas></div><div><h2>Reward</h2><canvas id="reward-chart" aria-label="Reward by training step"></canvas></div></div>
   <div id="fleet-status" class="fleet-strip"></div>
 </div>

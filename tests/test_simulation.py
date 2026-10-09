@@ -20,6 +20,7 @@ def test_rest_to_rest_motion_and_energy_closed_form():
     incomplete = backend.propagate([0, 0, 20], [100, 0, 20], spec, 1)
     assert incomplete.state(1)[0][0] == pytest.approx(2)
     assert incomplete.state(1)[1][0] == pytest.approx(4)
+    assert incomplete.state(1)[2][0] == pytest.approx(4)
 
 
 def test_aligned_initial_velocity_and_noncollinear_rejection():
@@ -78,6 +79,13 @@ def test_nadir_gsd_matches_pinhole_and_quality_formula():
     uav.gimbal = np.deg2rad(-40)
     _, oblique, _ = scan(area, uav, 1)
     assert np.nanmean(oblique) > 50 / focal
+
+
+def test_raster_boundary_preserves_cells_touched_at_a_vertex():
+    area = Area(ScenarioConfig(polygon_xy=[(0, 0), (16, 0), (0, 16)],
+        station_positions_xy=[(1, 1), (1, 5)], grid_size=16, observation_size=8))
+    assert area.mask[8, 8]  # The diagonal touches this cell's corner; center sampling alone misses it.
+    assert not area.mask[15, 15]
 
 
 def test_ema_fusion_and_zero_map_reward():

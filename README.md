@@ -6,6 +6,8 @@ Local research application for persistent multi-UAV area scanning. It combines a
 
 On this computer, double-click **launch.cmd**. It starts the Python service and opens **http://127.0.0.1:8765**. Close the launcher terminal or press Ctrl+C to stop the service. The service listens on loopback only.
 
+If the service is already running, the launcher opens the existing application. To stop a service running in the background, use `.\stop.ps1` from this directory. During training, choose **Stop & save** and wait for **Stopped** first.
+
 From PowerShell in this directory:
 
 ```powershell
@@ -18,7 +20,7 @@ To recreate the isolated environment:
 .\setup.ps1
 ```
 
-The environment lives in `.conda`, which Git ignores. All Python dependencies are installed into that prefix. The setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. To recreate those versions, install CPU PyTorch first, then run `.\.conda\python.exe -m pip install -r requirements-lock.txt` and `.\.conda\python.exe -m pip install -e ".[dev]"`.
+The environment lives in `.conda`, which Git ignores. All Python dependencies are installed into that prefix. The setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. After creating the prefix, restore those exact versions with `.\.conda\python.exe -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-lock.txt`, followed by `.\.conda\python.exe -m pip install -e ".[dev]"`.
 
 ## Workflow
 

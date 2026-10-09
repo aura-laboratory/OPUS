@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-09",
+  "code_commit": "9652b90e32d166cad7bc0f36391b533d65d25845",
+  "learning": {
+    "run_id": "20261009-160155-7747c6",
+    "seed": 7,
+    "initial": {
+      "episodes": 3,
+      "return_mean": 6.920666046717002,
+      "return_std": 0.0,
+      "coverage_mean": 0.20534727396443486,
+      "p10_final": 0.0,
+      "fairness_final": 0.295166175662503,
+      "energy_Wh": 11.222998433579866,
+      "collision_count": 0.0,
+      "crashed_uavs": 0.0,
+      "seeds": [
+        20000,
+        20001,
+        20002
+      ]
+    },
+    "trained": {
+      "episodes": 3,
+      "return_mean": 40.82751992640401,
+      "return_std": 0.0,
+      "coverage_mean": 0.6439687173697166,
+      "p10_final": 0.7667756080627441,
+      "fairness_final": 0.9643300019979799,
+      "energy_Wh": 11.361451880380526,
+      "collision_count": 0.0,
+      "crashed_uavs": 0.0,
+      "seeds": [
+        20000,
+        20001,
+        20002
+      ]
+    },
+    "random": {
+      "episodes": 3,
+      "return_mean": 16.87118652523424,
+      "return_std": 1.2109842528301291,
+      "coverage_mean": 0.11536758801472995,
+      "p10_final": 0.09517454480131467,
+      "fairness_final": 0.9326528943104843,
+      "energy_Wh": 12.705681859203438,
+      "collision_count": 0.0,
+      "crashed_uavs": 0.0,
+      "seeds": [
+        20000,
+        20001,
+        20002
+      ]
+    },
+    "heuristic": {
+      "episodes": 3,
+      "return_mean": 24.412716994999414,
+      "return_std": 0.0,
+      "coverage_mean": 0.3456023263861425,
+      "p10_final": 0.1633484959602356,
+      "fairness_final": 0.8108394656059433,
+      "energy_Wh": 11.763288802909996,
+      "collision_count": 0.0,
+      "crashed_uavs": 0.0,
+      "seeds": [
+        20000,
+        20001,
+        20002
+      ]
+    },
+    "learned_improvement": true,
+    "beats_random": true
+  },
+  "training_elapsed_seconds": 96.0224057000014,
+  "benchmark": {
+    "default_grid": 1024,
+    "default_observation": 128,
+    "default_fleet": 2,
+    "reset_seconds": 0.2978914999985136,
+    "steps": 50,
+    "step_seconds": 33.116839499998605,
+    "coverage": {
+      "mean": 0.5459404587745667,
+      "fairness": 0.9349210162061524,
+      "p10": 0.3270578980445862,
+      "std": 0.1440383642911911,
+      "fraction_above_0_1": 1.0
+    },
+    "crashes": 0,
+    "long_episode": {
+      "steps": 1000,
+      "terminated": false,
+      "truncated": true,
+      "simulated_seconds": 5000,
+      "crashes": 0,
+      "status_samples": {
+        "takeoff": 4,
+        "coverage": 1042,
+        "recharge-transit": 10,
+        "charging": 944
+      },
+      "elapsed_seconds": 6.105157600002713
+    }
+  }
+}

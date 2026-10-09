@@ -8,6 +8,28 @@ from shapely.geometry import LineString, Point, Polygon
 from opus_rl.configs.models import ScenarioConfig
 
 
+def rasterize_boundary(mask, vertices):
+    """Include every grid cell touched by an edge, including both sides of a grid line."""
+    size = mask.shape[0]
+    for start, end in zip(vertices, np.roll(vertices, -1, axis=0)):
+        delta = end - start
+        breaks = [np.array([0.0, 1.0])]
+        for axis in range(2):
+            if delta[axis]:
+                crossings = np.arange(min(start[axis], end[axis]) + 1, max(start[axis], end[axis]))
+                breaks.append((crossings - start[axis]) / delta[axis])
+        times = np.unique(np.concatenate(breaks))
+        samples = np.concatenate((times, (times[:-1] + times[1:]) / 2))
+        points = start + samples[:, None] * delta
+        lower = np.floor(points).astype(int)
+        adjacent = np.where(np.isclose(points, np.rint(points), atol=1e-9, rtol=0),
+                            np.rint(points).astype(int) - 1, lower)
+        for x in (lower[:, 0], adjacent[:, 0]):
+            for y in (lower[:, 1], adjacent[:, 1]):
+                valid = (x >= 0) & (x < size) & (y >= 0) & (y < size)
+                mask[y[valid], x[valid]] = True
+
+
 class Area:
     def __init__(self, config: ScenarioConfig):
         lon, lat = config.map_origin_wgs84
@@ -44,6 +66,7 @@ class Area:
         y = low[1] + (np.arange(self.size) + 0.5) * self.cell
         self.x, self.y = np.meshgrid(x, y)
         self.mask = intersects_xy(self.polygon, self.x, self.y)
+        rasterize_boundary(self.mask, np.rint((snapped - low) / self.cell).astype(int))
         if not self.mask.any():
             raise ValueError("Area has no cell centers at the selected grid resolution.")
         self.station_positions = np.asarray(config.station_positions_xy, dtype=float)
