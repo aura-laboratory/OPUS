@@ -1,0 +1,13 @@
+.conda/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+runs/
+build/
+dist/
+.coverage
+*.log
+.env

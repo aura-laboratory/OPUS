@@ -1,0 +1,126 @@
+{
+  "scenario": {
+    "polygon_xy": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        160.0,
+        0.0
+      ],
+      [
+        160.0,
+        160.0
+      ],
+      [
+        0.0,
+        160.0
+      ]
+    ],
+    "polygon_wgs84": null,
+    "map_origin_wgs84": [
+      22.94,
+      40.63
+    ],
+    "station_positions_xy": [
+      [
+        20.0,
+        20.0
+      ],
+      [
+        140.0,
+        140.0
+      ]
+    ],
+    "station_positions_wgs84": null,
+    "station_position_types": null,
+    "uav_types": [
+      {
+        "name": "Mavic 3E reference",
+        "available_count": 2,
+        "fixed_count": 2,
+        "max_horizontal_speed_mps": 15.0,
+        "max_climb_speed_mps": 6.0,
+        "max_descent_speed_mps": 6.0,
+        "max_horizontal_accel_mps2": 4.0,
+        "max_vertical_accel_mps2": 3.0,
+        "max_yaw_rate_degps": 200.0,
+        "max_yaw_accel_degps2": 90.0,
+        "max_gimbal_pitch_rate_degps": 100.0,
+        "gimbal_pitch_min_deg": -90.0,
+        "gimbal_pitch_max_deg": 35.0,
+        "battery_capacity_Wh": 77.0,
+        "initial_battery_ratio": 1.0,
+        "reserve_battery_ratio": 0.15,
+        "P_airborne_base_W": 121.6,
+        "k_vxy": 0.05,
+        "k_vz_up": 8.0,
+        "k_vz_down": 3.0,
+        "k_acc": 1.0,
+        "takeoff_energy_Wh": 0.3,
+        "landing_energy_Wh": 0.25,
+        "collision_radius_m": 1.0,
+        "camera_width_px": 5280,
+        "camera_height_px": 3956,
+        "camera_fov_deg": 84.0,
+        "camera_fov_axis": "diagonal"
+      }
+    ],
+    "station_types": [
+      {
+        "name": "100 W dock",
+        "available_count": 2,
+        "fixed_count": 2,
+        "charge_power_W": 100.0,
+        "landing_radius_m": 1.5
+      }
+    ],
+    "fleet_mode": "fixed",
+    "station_mode": "fixed",
+    "min_uavs": 1,
+    "max_uavs": null,
+    "min_stations": 1,
+    "max_stations": null,
+    "delta_t": 5.0,
+    "horizon": 1000,
+    "coverage_lambda": 0.9,
+    "min_altitude_m": 20.0,
+    "max_altitude_m": 100.0,
+    "required_gsd_m": 0.05,
+    "grid_size": 1024,
+    "observation_size": 128,
+    "reward": {
+      "mean_weight": 0.5,
+      "fairness_weight": 0.4,
+      "p10_weight": 0.1,
+      "energy_weight": 0.2,
+      "projection_weight": 0.1,
+      "collision_weight": 0.3,
+      "crash_weight": 0.4
+    }
+  },
+  "training": {
+    "total_steps": 10000,
+    "num_envs": 2,
+    "rollout_steps": 128,
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "batch_size": 64,
+    "epochs": 4,
+    "evaluation_frequency": 2048,
+    "evaluation_episodes": 2,
+    "evaluation_horizon": 1000,
+    "checkpoint_frequency": 2048,
+    "seed": 42,
+    "torch_threads": 2,
+    "device": "cpu",
+    "hidden_size": 128,
+    "target_kl": 0.03
+  }
+}

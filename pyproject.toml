@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opus-rl"
+version = "0.1.0"
+description = "Local research environment for persistent multi-UAV scanning with MAPPO"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "numpy>=1.26,<3", "gymnasium>=1.1,<2", "torch>=2.5,<3",
+  "pydantic>=2.9,<3", "shapely>=2.0,<3", "pyproj>=3.6,<4",
+  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+
+[project.scripts]
+opus = "opus_rl.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["opus_rl*"]
+
+[tool.setuptools.package-data]
+opus_rl = ["app/frontend/*", "app/frontend/vendor/*", "app/frontend/vendor/images/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["learning: bounded experiment that verifies actual learning"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
