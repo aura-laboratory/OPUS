@@ -48,7 +48,11 @@ Verified in the Codex in-app browser:
 - Step, Play, Pause, reset, live movement and coverage overlays.
 - Edited training values reaching the backend, live metrics, completion, graceful Stop & save, saved runs and learned-policy replay.
 
-Browser testing found and corrected stale numeric form values, a disabled Pause control and stale dock locations after replay. Loading a checkpoint now preserves the training action RNG. The launcher reuses a running local service; `stop.ps1` targets only this project's Conda Python service.
+Browser testing found and corrected stale numeric form values, a disabled Pause control and stale dock locations after replay. Loading a checkpoint now preserves the training action RNG. The launcher reuses a running local service; `stop.ps1` targets only the named OPUS environment's Python service.
+
+## Environment migration: 2026-10-15
+
+The original project-local `.conda` environment was cloned into the named **OPUS** environment at `C:\Users\thano\miniconda3\envs\OPUS`, preserving installed versions. Pip-generated console launchers were updated for the new interpreter location. All 21 tests, dependency consistency, lint, `conda activate OPUS`, the application launcher and the stop script were checked in the named environment. Setup, launch instructions and `environment.yml` now use OPUS. The old environment was removed after verification; saved runs remain in the project.
 
 ## Remaining research limits
 

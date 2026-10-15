@@ -1,7 +1,7 @@
-name: opus-v1
+name: OPUS
 channels:
   - conda-forge
 dependencies:
   - python=3.11
   - pip
-# Run setup.ps1 to install CPU PyTorch and this package into the local .conda prefix.
+# Run setup.ps1 to install CPU PyTorch and this package into the named OPUS environment.

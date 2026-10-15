@@ -1,9 +1,11 @@
 @echo off
 cd /d "%~dp0"
-if not exist ".conda\python.exe" (
-  echo Run setup.ps1 first to create the isolated environment.
+set "OPUS_CONDA=%CONDA_EXE%"
+if not defined OPUS_CONDA set "OPUS_CONDA=%USERPROFILE%\miniconda3\Scripts\conda.exe"
+if not exist "%OPUS_CONDA%" set "OPUS_CONDA=conda"
+call "%OPUS_CONDA%" run --no-capture-output --name OPUS python -m opus_rl serve %*
+if errorlevel 1 (
+  echo Run setup.ps1 if the OPUS Conda environment has not been created.
   pause
   exit /b 1
 )
-set "PATH=%~dp0.conda\Library\bin;%~dp0.conda\Scripts;%PATH%"
-".conda\python.exe" -m opus_rl serve %*

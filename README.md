@@ -11,7 +11,8 @@ If the service is already running, the launcher opens the existing application. 
 From PowerShell in this directory:
 
 ```powershell
-.\.conda\python.exe -m opus_rl serve
+conda activate OPUS
+python -m opus_rl serve
 ```
 
 To recreate the isolated environment:
@@ -20,7 +21,7 @@ To recreate the isolated environment:
 .\setup.ps1
 ```
 
-The environment lives in `.conda`, which Git ignores. All Python dependencies are installed into that prefix. The setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. After creating the prefix, restore those exact versions with `.\.conda\python.exe -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-lock.txt`, followed by `.\.conda\python.exe -m pip install -e ".[dev]"`.
+The isolated environment is named **OPUS**. Activate it with `conda activate OPUS`; on this computer it lives in `C:\Users\thano\miniconda3\envs\OPUS`. The launcher selects it automatically through `conda run --name OPUS`. All Python dependencies are installed into that environment. Setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. After creating and activating OPUS, restore those exact versions with `python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-lock.txt`, followed by `python -m pip install -e ".[dev]"`.
 
 ## Workflow
 
@@ -35,11 +36,12 @@ Scenario JSON can be imported/exported locally. The application can simulate and
 ## Command line
 
 ```powershell
-.\.conda\python.exe -m opus_rl config --output configs/default.json
-.\.conda\python.exe -m opus_rl train --config configs/default.json
-.\.conda\python.exe -m opus_rl evaluate runs/<run-id>/best.pt --episodes 3
-.\.conda\python.exe -m pytest -q
-.\.conda\python.exe -m ruff check opus_rl tests
+conda activate OPUS
+python -m opus_rl config --output configs/default.json
+python -m opus_rl train --config configs/default.json
+python -m opus_rl evaluate runs/<run-id>/best.pt --episodes 3
+python -m pytest -q
+python -m ruff check opus_rl tests
 ```
 
 `configs/learning-smoke.json` is a small, bounded learning experiment. `configs/default.json` retains the full 1024² coverage grid, 128² observation grid, 5-second decisions, λ=0.9, 20–100 m coverage altitude, 1,000-decision episodes, and agreed reward weights. Configurations also support a reduced grid for development.
