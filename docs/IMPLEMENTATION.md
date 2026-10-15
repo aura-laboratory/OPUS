@@ -44,7 +44,7 @@ All feature normalization is fixed and explicit; no running observation statisti
 
 ## Local application
 
-FastAPI binds to 127.0.0.1. No cloud hosting or Git remote is set up. Basemap tiles come from OpenStreetMap, and submitted place searches use cached, rate-limited Nominatim requests (at most one per 1.05 s). No automatic search-as-you-type or bulk tile download is performed. Public service availability is not required for local-coordinate simulation/training.
+FastAPI binds to 127.0.0.1. The application runs locally; source code is hosted in the aura-laboratory/OPUS GitHub repository, while checkpoints and experiments remain local. Basemap tiles come from OpenStreetMap, and submitted place searches use cached, rate-limited Nominatim requests (at most one per 1.05 s). No automatic search-as-you-type or bulk tile download is performed. Public service availability is not required for local-coordinate simulation/training.
 
 The map overlay is for visualization; metric geometry and camera calculations use pyproj's local azimuthal-equidistant frame. Vertices snap to grid vertices. The raster combines center-based point-in-polygon membership with a supercover boundary, retaining every cell touched by an edge or vertex. Thus the raster boundary approximates the polygon to within a cell; camera projection evaluates those cells at their centers. Date-line-crossing areas and geographic latitudes beyond ±85° require preprocessing. API validation caps the area extent and inventory, and rejects excessive rollout buffer settings.
 

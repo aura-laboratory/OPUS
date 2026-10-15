@@ -2,9 +2,22 @@
 
 Local research application for persistent multi-UAV area scanning. It combines a Gymnasium team environment, analytical motion/energy/camera models, a deterministic recharge scheduler, a shared MAPPO actor, a centralized critic, and a browser dashboard.
 
+![OPUS dashboard replaying a learned coverage policy](docs/dashboard.jpg)
+
+*Example from the local dashboard: a trained policy scanning a 40 × 40 m demo area with one UAV. The overlay shows persistent coverage quality; the lower panel reports quality, battery, energy and safety metrics. This example demonstrates the training and replay pipeline; broader multi-UAV learning remains a research validation task.*
+
 ## Start
 
-On this computer, double-click **launch.cmd**. It starts the Python service and opens **http://127.0.0.1:8765**. Close the launcher terminal or press Ctrl+C to stop the service. The service listens on loopback only.
+The setup and launch scripts target Windows and require Git and Conda. From PowerShell:
+
+```powershell
+git clone https://github.com/aura-laboratory/OPUS.git
+cd OPUS
+.\setup.ps1
+.\launch.cmd
+```
+
+After setup, double-click **launch.cmd** to start the Python service and open **http://127.0.0.1:8765**. Close the launcher terminal or press Ctrl+C to stop the service. The service listens on loopback only.
 
 If the service is already running, the launcher opens the existing application. To stop a service running in the background, use `.\stop.ps1` from this directory. During training, choose **Stop & save** and wait for **Stopped** first.
 
@@ -21,7 +34,7 @@ To recreate the isolated environment:
 .\setup.ps1
 ```
 
-The isolated environment is named **OPUS**. Activate it with `conda activate OPUS`; on this computer it lives in `C:\Users\thano\miniconda3\envs\OPUS`. The launcher selects it automatically through `conda run --name OPUS`. All Python dependencies are installed into that environment. Setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. After creating and activating OPUS, restore those exact versions with `python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-lock.txt`, followed by `python -m pip install -e ".[dev]"`.
+The isolated environment is named **OPUS**. Activate it with `conda activate OPUS`. The launcher selects it automatically through `conda run --name OPUS`. All Python dependencies are installed into that environment. Setup uses conda-forge for Python and the official CPU PyTorch wheel index; it does not change the base Conda installation. `requirements-lock.txt` records the installed package versions. After creating and activating OPUS, restore those exact versions with `python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-lock.txt`, followed by `python -m pip install -e ".[dev]"`.
 
 ## Workflow
 
@@ -31,7 +44,7 @@ The isolated environment is named **OPUS**. Activate it with `conda activate OPU
 4. In **Training**, set the step budget, environment count, PPO parameters, evaluation and checkpoint intervals, and seed. **Start training** starts a local background job. **Stop & save** finishes the current calculation and writes a final checkpoint.
 5. **Runs** lists saved experiments. Select a checkpoint, replay it, run repeatable evaluation, or export a ZIP containing model/configuration/normalization/metrics/evaluation files.
 
-Scenario JSON can be imported/exported locally. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. No source code, checkpoints, or experiments are uploaded.
+Scenario JSON can be imported/exported locally. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. The application does not upload scenarios, checkpoints, or experiment data.
 
 ## Command line
 
@@ -46,14 +59,16 @@ python -m ruff check opus_rl tests
 
 `configs/learning-smoke.json` is a small, bounded learning experiment. `configs/default.json` retains the full 1024² coverage grid, 128² observation grid, 5-second decisions, λ=0.9, 20–100 m coverage altitude, 1,000-decision episodes, and agreed reward weights. Configurations also support a reduced grid for development.
 
-## Local Git
+## Git repository
 
-This directory is its own Git repository on branch `main`. The research files in the parent OPUS directory and the old `Code` prototype are preserved. A copy of the specification is tracked under `docs/`. No remote is configured.
+The source repository is [aura-laboratory/OPUS](https://github.com/aura-laboratory/OPUS), with `master` as the default branch. The local checkout is connected through `origin`. A copy of the system specification is tracked under `docs/`.
 
 ```powershell
 git status
 git log --oneline
 git diff
+git pull --ff-only
+git push
 ```
 
 Generated runs, Conda packages, caches, and model files are excluded from Git. Export important experiments separately if you need another copy.
