@@ -240,9 +240,8 @@ function renderStation() {
 }
 function renderForms() {
   const s=config.scenario,properties=schema.$defs.ScenarioConfig.properties;
-  numericFields('mission-fields',s,['required_gsd_m','min_altitude_m','max_altitude_m','coverage_lambda'],'scenario',properties);
+  numericFields('mission-fields',s,['required_gsd_m','min_altitude_m','max_altitude_m','coverage_lambda','grid_size','observation_size'],'scenario',properties);
   numericFields('episode-fields',s,['delta_t','horizon'],'scenario',properties);
-  numericFields('grid-fields',s,['grid_size','observation_size'],'scenario',properties);
   renderUAVs();renderStation();
   const main=['total_steps','num_envs','rollout_steps','evaluation_frequency','evaluation_episodes','evaluation_horizon','checkpoint_frequency','seed'];
   numericFields('training-fields',config.training,main,'training',schema.$defs.TrainConfig.properties);
