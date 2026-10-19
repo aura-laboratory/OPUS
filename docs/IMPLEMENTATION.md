@@ -2,7 +2,7 @@
 
 The tracked system specification dated 2026-10-09 is the baseline. The following decisions make its remaining ambiguities executable. The agreed coverage, altitude, interval, horizon, and reward defaults remain unchanged.
 
-The user revision of 2026-10-19 supersedes the baseline's one-UAV-per-dock constraint and configurable initial charge: launch docks are assigned per UAV, shared launches are staged, and every UAV starts fully charged. The UI uses one dock type and a single fixed/sampled inventory selector.
+The user revisions of 2026-10-19 supersede the baseline's one-UAV-per-dock constraint and configurable initial charge: launch docks are assigned per UAV, shared launches are staged, and every UAV starts fully charged. Browser missions now define individual named UAVs with independent presets and properties, and one dock preset with a dock count. The inventory selection UI is removed. Step interval and episode length are in Training. See `PRESETS.md` for reference data and assumptions.
 
 ## Motion and boundary feasibility
 
@@ -28,7 +28,7 @@ At λ=0.9 and ΔT=5 s, coverage half-life is about 32.9 s. Large-area performanc
 
 ## Inventory and recharge
 
-Sampling is without replacement from typed UAV inventory. Launch assignments use stable inventory-slot IDs, with zero-based dock IDs in JSON and one-based numbers in the UI. Fixed mode uses the selected count from each type; variable mode samples available slots. Sampled station counts respect the launch docks required by that sampled fleet. There is no longer a one-UAV-per-dock fleet limit.
+Browser missions store each UAV as a separate entry with both internal counts equal to one; the dock count sets both internal station counts. Preset IDs and individual names persist in configurations and checkpoints. Older grouped definitions are expanded into individual cards when opened in the browser. The legacy typed-inventory/sampling API remains readable for earlier runs and command-line experiments. Launch assignments use stable inventory-slot IDs, with zero-based dock IDs in JSON and one-based numbers in the UI. Sampled station counts respect the launch docks required by that sampled fleet. There is no one-UAV-per-dock fleet limit.
 
 All UAVs start at 100% charge. Docks have an unlimited external supply. Multiple UAVs assigned to one dock are staged off the physical berth: one occupies the pad and the others wait with no actor actions or energy draw. Queued UAVs are excluded from collision trajectories and map markers until launch; their observation uses the existing charging status encoding to retain checkpoint dimensions. Takeoff waits for the berth and launch column to clear. Each dock still charges one aircraft at a time.
 

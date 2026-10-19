@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from opus_rl.app import FRONTEND, frontend_revision
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
+from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
 from opus_rl.training.evaluate import evaluate, heuristic_action
 from opus_rl.training.train import load_checkpoint, save_json, train
@@ -88,7 +89,7 @@ def create_app(runs_root=None):
     @app.get("/api/defaults")
     def defaults():
         config = ExperimentConfig()
-        return {"config": config.model_dump(), "schema": config.model_json_schema()}
+        return {"config": config.model_dump(), "schema": config.model_json_schema(), "presets": reference_presets()}
 
     @app.post("/api/configuration/check")
     def check_configuration(body: dict):

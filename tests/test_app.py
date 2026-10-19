@@ -120,3 +120,35 @@ def test_interface_refresh_uses_current_assets_without_caching(tmp_path, monkeyp
         assert next_revision != revision
         assert f'/static/app.js?v={next_revision}' in second.text
         assert client.get(f'/static/app.js?v={next_revision}').text == 'const revision = 2;'
+
+
+def test_individual_uav_presets_persist_through_simulation_and_checkpoint(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        defaults = client.get('/api/defaults').json()
+        presets = defaults['presets']
+        assert len(presets['uavs']) == 4 and len(presets['docks']) == 2
+        data = experiment()
+        data['scenario']['uav_types'] = [
+            {**presets['uavs'][j % 4]['values'], 'name': f'Survey {j + 1}'} for j in range(3)
+        ]
+        data['scenario']['uav_launch_docks'] = [0, 0, 1]
+        data['scenario']['station_types'] = [
+            {**presets['docks'][1]['values'], 'available_count': 2, 'fixed_count': 2}
+        ]
+        frame = client.post('/api/simulation/reset', json=data).json()
+        assert [u['type'] for u in frame['uavs']] == ['Survey 1', 'Survey 2', 'Survey 3']
+        assert [u['status'] for u in frame['uavs']] == ['charging', 'queued', 'charging']
+        assert client.post('/api/training/start', json=data).status_code == 200
+        for _ in range(300):
+            status = client.get('/api/training/status').json()
+            if status['status'] in ('completed', 'failed'):
+                break
+            time.sleep(.05)
+        assert status['status'] == 'completed', status
+        loaded = client.post(f"/api/runs/{status['run_id']}/load", json={'checkpoint': 'final.pt'})
+        assert loaded.status_code == 200
+        saved = loaded.json()['config']['scenario']
+        assert [u['preset_id'] for u in saved['uav_types']] == ['mavic-3e', 'mavic-3t', 'matrice-4e']
+        assert [u['name'] for u in saved['uav_types']] == ['Survey 1', 'Survey 2', 'Survey 3']
+        assert all(u['available_count'] == u['fixed_count'] == 1 for u in saved['uav_types'])
+        assert saved['station_types'][0]['charge_power_W'] == 151.2

@@ -13,30 +13,24 @@
 <main>
 <aside>
   <section id="mission-controls">
-    <div class="group"><h2>Area of interest</h2>
+    <div class="group mission-group"><h2>Area of interest</h2>
       <div id="area-summary" class="muted"></div>
       <div class="toolbar"><button id="draw-area">Draw area</button></div>
       <small class="field-error" data-error-path="scenario.polygon_wgs84" hidden></small>
       <div id="mission-fields" class="fields"></div>
     </div>
-    <div class="group"><h2>UAVs <button id="add-uav" class="text-button">+ Type</button></h2>
+    <div class="group mission-group uavs-group"><h2>UAVs <button id="add-uav" class="text-button">+UAV</button></h2>
       <div id="uav-types"></div>
-      <details id="launch-docks"><summary>Launch docks</summary><div id="launch-fields"></div></details>
     </div>
-    <div class="group"><h2>Charging stations</h2><div id="station-types"></div>
+    <div class="group mission-group"><h2>Charging stations</h2><div id="station-types"></div>
       <div class="toolbar"><button id="place-station">Place docks</button><button id="clear-docks" class="text-button">Clear</button></div>
       <small class="field-error" data-error-path="scenario.station_positions_wgs84" hidden></small>
     </div>
-    <details class="group"><summary>Grid</summary><div id="grid-fields" class="fields"></div></details>
-    <div class="group">
-      <label class="field" for="scenario-mode">Selection
-        <select id="scenario-mode"><option value="fixed">Fixed fleet</option><option value="variable">Sample from inventory</option></select>
-      </label>
-      <div id="sampling-fields" class="fields" hidden></div>
-    </div>
+    <details class="group mission-group"><summary>Grid</summary><div id="grid-fields" class="fields"></div></details>
     <button id="validate" class="primary full">Validate mission</button>
   </section>
   <section id="training-controls" hidden>
+    <div id="episode-fields" class="fields"></div>
     <div id="training-fields" class="fields"></div>
     <details class="group"><summary>MAPPO</summary><div id="ppo-fields" class="fields"></div></details>
     <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div></details>

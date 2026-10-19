@@ -12,9 +12,30 @@ aside{padding:20px 24px}.group:first-child{border-top:0;margin-top:0;padding-top
 .type-block details{margin-top:14px}.type-block details details{margin:14px 0 0;padding-top:12px;border-top:1px solid #304352}
 .model-name{display:block;font-size:13px;font-weight:500}.launch-row{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:4px 12px;margin-top:10px}
 .launch-row select{margin:0}.launch-row .field-error{grid-column:1/-1}
-#launch-docks{margin-top:16px}#scenario-mode{margin-bottom:0}#area-summary{font-size:11px;margin-top:2px}
+#area-summary{font-size:11px;margin-top:2px}
 .dock-marker{position:relative;display:flex;align-items:center;justify-content:center;background:#bce8c2;border:1px solid #579b65;border-radius:5px;color:#225c32;box-shadow:0 1px 5px #0004}
 .dock-marker svg{width:21px;height:21px;fill:currentColor}.dock-number{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;line-height:15px;border-radius:8px;background:#e3f5e6;border:1px solid #579b65;color:#225c32;font:10px/14px Opus,"Segoe UI",sans-serif;text-align:center;padding:0 2px}
 .uav-marker.queued,.status-dot.queued{background:#94a5af}
 .type-name>.field{flex:1}
 .field.invalid>input{border-color:#ef867b}
+aside{padding:18px 18px}
+#mission-controls>.group{margin-top:28px;padding-top:0;border-top:0}
+#mission-controls>.group:first-child{margin-top:0}
+#mission-controls h2{margin-bottom:8px}
+#mission-controls>.uavs-group{border:1px solid #3b5160;border-radius:8px;padding:12px}
+#uav-types{display:grid;gap:10px}
+.uav-card{border:1px solid #304857;border-radius:6px;background:#13222e;padding:10px;min-width:0}
+.card-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.card-header h3{font-size:12px;color:#9ec4df;font-weight:600;margin:0}
+.card-header .text-button{font-size:11px;padding:0}
+.identity-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.identity-fields>.field:last-child{grid-column:1/-1}
+.identity-fields input,.identity-fields select{margin-top:4px;padding:7px 8px}
+.uav-card details{margin-top:10px}.uav-card details details{border-top:1px solid #2d424f;padding-top:8px;margin-top:10px}
+.uav-card .fields{margin-top:8px;gap:8px}
+#station-types>.field{margin-top:0}#station-types .fields{margin-top:10px;gap:10px}
+.dock-marker{position:absolute}
+.uav-marker,.uav-marker.charging,.uav-marker.crashed{position:absolute;display:flex;align-items:center;justify-content:center;background:#9ed2f4;color:#174e77;border:1px solid #347caf;border-radius:50%;box-shadow:0 1px 5px #0005}
+.uav-marker svg{width:22px;height:22px}
+.uav-number{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;padding:0 2px;border-radius:8px;background:#dceffc;border:1px solid #347caf;color:#174e77;font:10px/14px Opus,"Segoe UI",sans-serif;text-align:center}
+.uav-marker.crashed{opacity:.6}

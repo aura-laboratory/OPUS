@@ -1,15 +1,15 @@
 'use strict';
-let config, defaults, schema, map, polygonLayer, previewLayer, heatLayer, markerGroup;
+let config, defaults, schema, presets, map, polygonLayer, previewLayer, heatLayer, markerGroup;
 let draft = [], dockPoints = [], mode = 'idle', playing = false, simulationReady = false, currentTab = 'mission';
 let activeJob = false, lastFrame, playGeneration = 0, validationTimer, validationVersion = 0;
 const $ = id => document.getElementById(id);
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fields = {
-  required_gsd_m:['Required GSD','cm/pixel',100], delta_t:['Decision interval ΔT','s'],
+  required_gsd_m:['Required GSD','cm/pixel',100], delta_t:['Step time interval ΔT','s'],
   min_altitude_m:['Minimum altitude','m'], max_altitude_m:['Maximum altitude','m'],
   coverage_lambda:['Coverage memory λ',''], horizon:['Episode steps','steps'],
   grid_size:['Coverage grid','cells/side'], observation_size:['Observation grid','cells/side'],
-  available_count:['Available',''], fixed_count:['In mission',''],
+  fixed_count:['Number of docks',''],
   max_horizontal_speed_mps:['Horizontal speed','m/s'], max_climb_speed_mps:['Climb speed','m/s'],
   max_descent_speed_mps:['Descent speed','m/s'], max_horizontal_accel_mps2:['Horizontal acceleration','m/s²'],
   max_vertical_accel_mps2:['Vertical acceleration','m/s²'], max_yaw_rate_degps:['Yaw rotational speed','°/s'],
@@ -50,7 +50,7 @@ function errorPaths(error) {
     ['Variable count bounds',['scenario.min_uavs','scenario.max_uavs','scenario.min_stations','scenario.max_stations']],
     ['Place exactly',['scenario.station_positions_wgs84','scenario.station_types.0.fixed_count']],
     ['launch dock',['scenario.uav_launch_docks']],
-    ['at least one active',['scenario.station_types.0.fixed_count','scenario.uav_types.0.fixed_count']]
+    ['at least one active',['scenario.station_types.0.fixed_count']]
   ];
   if(message.includes('Fixed UAV count')||message.includes('Fixed station count')) return [path+'.fixed_count'];
   if(message.includes('Gimbal minimum')) return [path+'.gimbal_pitch_min_deg',path+'.gimbal_pitch_max_deg'];
@@ -126,88 +126,124 @@ function details(title,object,keys,path,properties) {
   summary.textContent=title;holder.className='fields';numericFields(holder,object,keys,path,properties);
   group.append(summary,holder);return group;
 }
-function resizeAssignments(typeIndex,oldCount,newCount) {
-  const mapping=config.scenario.uav_launch_docks;
-  if(!mapping||!Number.isInteger(newCount)||newCount<1||newCount>128) return;
-  const offset=config.scenario.uav_types.slice(0,typeIndex).reduce((n,t)=>n+t.available_count,0);
-  mapping.splice(offset,oldCount,...Array.from({length:newCount},(_,i)=>mapping[offset+i]??0));
+function inferPreset(item,options) {
+  return options.find(p=>Object.entries(p.values).every(([key,value])=>
+    ['name','preset_id','available_count','fixed_count'].includes(key)||item[key]===value))?.id||null;
 }
-function renderTypes(kind) {
-  const list=config.scenario[kind+'_types'], holder=$(kind+'-types');holder.replaceChildren();
-  list.forEach((item,index)=>{
-    const path='scenario.'+kind+'_types.'+index, properties=schema.$defs[kind==='uav'?'UAVType':'StationType'].properties;
-    const box=document.createElement('div');box.className='type-block';
-    if(kind==='uav') {
-      const row=document.createElement('div');row.className='type-name';
-      const input=document.createElement('input');input.value=item.name;input.setAttribute('aria-label','UAV type name');
-      input.oninput=()=>{item.name=input.value;changed();};
-      const remove=document.createElement('button');remove.className='text-button';remove.textContent='Remove';remove.setAttribute('aria-label','Remove UAV type');
-      remove.onclick=()=>{
-        if(list.length===1) return;
-        const offset=list.slice(0,index).reduce((n,t)=>n+t.available_count,0);
-        config.scenario.uav_launch_docks?.splice(offset,item.available_count);
-        list.splice(index,1);renderTypes(kind);renderLaunchFields();changed();
-      };
-      const nameField=document.createElement('label');nameField.className='field';nameField.append(input);
-      const nameError=document.createElement('small');nameError.className='field-error';nameError.dataset.errorPath=path+'.name';nameError.hidden=true;nameField.append(nameError);
-      row.append(nameField);if(list.length>1)row.append(remove);box.append(row);
-    } else {const title=document.createElement('strong');title.className='model-name';title.textContent=item.name;box.append(title);}
-    const counts=document.createElement('div');counts.className='fields';
-    counts.append(numericField(item,'available_count',path+'.available_count',properties,old=>{
-      if(kind==='uav')resizeAssignments(index,old,item.available_count);
-      if(config.scenario.fleet_mode==='variable'&&Number.isInteger(item.available_count)&&item.available_count>0) {
-        item.fixed_count=Math.min(item.fixed_count,item.available_count);
-        const selected=document.getElementById(path+'.fixed_count');if(selected)selected.value=item.fixed_count;
-      }
-      renderLaunchFields();
-    }));
-    const selected=numericField(item,'fixed_count',path+'.fixed_count',properties,()=>renderLaunchFields());
-    selected.hidden=config.scenario.fleet_mode==='variable';counts.append(selected);box.append(counts);
-    const propertiesGroup=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Properties';propertiesGroup.append(summary);
-    if(kind==='uav') {
-      const flight=document.createElement('div');flight.className='fields';
-      numericFields(flight,item,['max_horizontal_speed_mps','max_climb_speed_mps','max_descent_speed_mps','max_horizontal_accel_mps2','max_vertical_accel_mps2','max_yaw_rate_degps','max_yaw_accel_degps2','collision_radius_m','battery_capacity_Wh','reserve_battery_ratio'],path,properties);
-      propertiesGroup.append(flight);
-      propertiesGroup.append(details('Energy model',item,['P_airborne_base_W','k_vxy','k_vz_up','k_vz_down','k_acc','takeoff_energy_Wh','landing_energy_Wh'],path,properties));
-      const camera=details('Camera',item,['camera_width_px','camera_height_px','camera_fov_deg','gimbal_pitch_min_deg','gimbal_pitch_max_deg','max_gimbal_pitch_rate_degps'],path,properties);
-      const label=document.createElement('label');label.className='field';label.textContent='FOV axis';
-      const select=document.createElement('select');select.setAttribute('aria-label','FOV axis');
-      for(const axis of ['diagonal','horizontal'])select.add(new Option(axis,axis));
-      select.value=item.camera_fov_axis;select.onchange=()=>{item.camera_fov_axis=select.value;changed();};label.append(select);camera.append(label);propertiesGroup.append(camera);
-    } else {const row=document.createElement('div');row.className='fields';row.append(numericField(item,'charge_power_W',path+'.charge_power_W',properties));propertiesGroup.append(row);}
-    box.append(propertiesGroup);holder.append(box);
+function normalizeMission(s,frame=null) {
+  const entries=[],assignments=[];let offset=0;
+  const docks=s.station_types[0];
+  const count=s.station_mode==='variable'&&frame?frame.stations.length:docks.fixed_count;
+  for(const type of s.uav_types) {
+    const amount=s.fleet_mode==='variable'?type.available_count:type.fixed_count;
+    for(let j=0;j<amount;j++) {
+      const entry=structuredClone(type);
+      entry.available_count=entry.fixed_count=1;
+      entry.preset_id=type.preset_id||inferPreset(type,presets.uavs);
+      if(amount>1||presets.uavs.some(p=>p.label===entry.name))entry.name='UAV '+(entries.length+1);
+      assignments.push(s.uav_launch_docks?.[offset+j]??(offset+j)%Math.max(1,count));entries.push(entry);
+    }
+    offset+=type.available_count;
+  }
+  s.uav_types=entries;s.uav_launch_docks=assignments;s.fleet_mode=s.station_mode='fixed';
+  docks.available_count=docks.fixed_count=count;
+  docks.preset_id=docks.preset_id||inferPreset(docks,presets.docks);
+  if(frame) {
+    s.station_positions_wgs84=frame.stations.map(d=>d.geographic);
+    s.station_positions_xy=[];s.station_position_types=frame.stations.map(()=>0);
+  }
+}
+function presetField(item,options,title,onSelect) {
+  const label=document.createElement('label');label.className='field';label.textContent='Preset';
+  const select=document.createElement('select');select.setAttribute('aria-label',title);
+  for(const preset of options)select.add(new Option(preset.label,preset.id));
+  select.add(new Option('Custom',''));select.value=item.preset_id||'';
+  select.onchange=()=>{
+    const selected=options.find(p=>p.id===select.value);
+    if(selected)onSelect(selected);else{item.preset_id=null;changed();}
+  };
+  label.append(select);return label;
+}
+function nameField(item,index) {
+  const path='scenario.uav_types.'+index+'.name',label=document.createElement('label');label.className='field';label.textContent='Name';
+  const input=document.createElement('input');input.value=item.name;input.id=path;input.setAttribute('aria-label','Name for UAV '+(index+1));
+  input.oninput=()=>{item.name=input.value;changed();};
+  const error=document.createElement('small');error.className='field-error';error.dataset.errorPath=path;error.hidden=true;
+  label.append(input,error);return label;
+}
+function renderUAVs() {
+  const holder=$('uav-types');holder.replaceChildren();
+  const properties=schema.$defs.UAVType.properties;
+  config.scenario.uav_types.forEach((item,index)=>{
+    const path='scenario.uav_types.'+index,card=document.createElement('article');card.className='uav-card';card.setAttribute('aria-label','UAV '+(index+1));
+    const header=document.createElement('div');header.className='card-header';
+    const title=document.createElement('h3');title.textContent='UAV '+(index+1);
+    const remove=document.createElement('button');remove.className='text-button';remove.textContent='Remove';
+    remove.setAttribute('aria-label','Remove UAV '+(index+1));remove.disabled=config.scenario.uav_types.length===1;
+    remove.onclick=()=>{
+      config.scenario.uav_types.splice(index,1);config.scenario.uav_launch_docks.splice(index,1);
+      renderUAVs();changed();
+    };
+    header.append(title,remove);
+    const identity=document.createElement('div');identity.className='identity-fields';
+    const preset=presetField(item,presets.uavs,'Preset for UAV '+(index+1),selected=>{
+      const name=item.name;Object.assign(item,structuredClone(selected.values),{name});
+      renderUAVs();changed();
+    });
+    const launch=document.createElement('div');launch.className='uav-launch';launch.dataset.uav=index;identity.append(nameField(item,index),launch,preset);
+    const propertiesGroup=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Properties';propertiesGroup.append(summary);
+    const flight=document.createElement('div');flight.className='fields';
+    numericFields(flight,item,['max_horizontal_speed_mps','max_climb_speed_mps','max_descent_speed_mps','max_horizontal_accel_mps2','max_vertical_accel_mps2','max_yaw_rate_degps','max_yaw_accel_degps2','collision_radius_m','battery_capacity_Wh','reserve_battery_ratio'],path,properties);
+    propertiesGroup.append(flight,details('Energy model',item,['P_airborne_base_W','k_vxy','k_vz_up','k_vz_down','k_acc','takeoff_energy_Wh','landing_energy_Wh'],path,properties));
+    const camera=details('Camera',item,['camera_width_px','camera_height_px','camera_fov_deg','gimbal_pitch_min_deg','gimbal_pitch_max_deg','max_gimbal_pitch_rate_degps'],path,properties);
+    const axis=document.createElement('label');axis.className='field';axis.textContent='FOV axis';
+    const select=document.createElement('select');select.setAttribute('aria-label','FOV axis for UAV '+(index+1));
+    for(const value of ['diagonal','horizontal'])select.add(new Option(value,value));
+    select.value=item.camera_fov_axis;select.onchange=()=>{item.camera_fov_axis=select.value;changed();};
+    axis.append(select);camera.append(axis);propertiesGroup.append(camera);
+    card.append(header,identity,propertiesGroup);holder.append(card);
   });
+  $('add-uav').disabled=config.scenario.uav_types.length>=128;renderLaunchFields();
 }
 function dockCount() {
-  const s=config.scenario;return Math.max(0,Math.min(128,s.station_mode==='fixed'?s.station_types[0].fixed_count:(s.max_stations||s.station_types[0].available_count)));
+  return Math.max(0,Math.min(128,config.scenario.station_types[0].fixed_count||0));
 }
 function renderLaunchFields() {
-  const holder=$('launch-fields');holder.replaceChildren();let slot=0;const count=dockCount();
-  config.scenario.uav_types.forEach(type=>{
-    for(let j=0;j<Math.min(128,Math.max(0,type.available_count));j++,slot++) {
-      if(config.scenario.fleet_mode==='fixed'&&j>=type.fixed_count)continue;
-      const index=slot, label=document.createElement('label');label.className='field launch-row';label.textContent='UAV '+(index+1);
-      const select=document.createElement('select');select.setAttribute('aria-label','Launch dock for UAV '+(index+1));
-      for(let dock=0;dock<count;dock++)select.add(new Option('Dock '+(dock+1),String(dock)));
-      select.value=String(config.scenario.uav_launch_docks?.[index]??index%Math.max(1,count));
-      select.onchange=()=>{
-        const owned=config.scenario.uav_types.reduce((n,t)=>n+t.available_count,0);
-        if(!config.scenario.uav_launch_docks)config.scenario.uav_launch_docks=Array.from({length:owned},(_,i)=>i%Math.max(1,count));
-        config.scenario.uav_launch_docks[index]=Number(select.value);changed();
-      };
-      label.append(select);const error=document.createElement('small');error.className='field-error';error.dataset.errorPath='scenario.uav_launch_docks.'+index;error.hidden=true;label.append(error);holder.append(label);
-    }
+  const count=dockCount();
+  document.querySelectorAll('.uav-launch').forEach(holder=>{
+    holder.replaceChildren();const index=Number(holder.dataset.uav);
+    const label=document.createElement('label');label.className='field';label.textContent='Launch dock';
+    const select=document.createElement('select');select.setAttribute('aria-label','Launch dock for UAV '+(index+1));
+    for(let dock=0;dock<count;dock++)select.add(new Option('Dock '+(dock+1),String(dock)));
+    select.value=String(config.scenario.uav_launch_docks?.[index]??index%Math.max(1,count));
+    select.onchange=()=>{config.scenario.uav_launch_docks[index]=Number(select.value);changed();};
+    const error=document.createElement('small');error.className='field-error';error.dataset.errorPath='scenario.uav_launch_docks.'+index;error.hidden=true;
+    label.append(select,error);holder.append(label);
   });
 }
+function renderStation() {
+  const holder=$('station-types');holder.replaceChildren();
+  const item=config.scenario.station_types[0],properties=schema.$defs.StationType.properties;
+  holder.append(presetField(item,presets.docks,'Charging station preset',selected=>{
+    const count=item.fixed_count;Object.assign(item,structuredClone(selected.values),{available_count:count,fixed_count:count});
+    renderStation();changed();
+  }));
+  const row=document.createElement('div');row.className='fields';
+  row.append(numericField(item,'fixed_count','scenario.station_types.0.fixed_count',properties,()=>{
+    if(Number.isInteger(item.fixed_count)&&item.fixed_count>=0&&item.fixed_count<=128) {
+      item.available_count=Math.max(1,item.fixed_count);
+      if(dockPoints.length>item.fixed_count){dockPoints.length=item.fixed_count;syncDocks();}
+      renderLaunchFields();
+    }
+  }),numericField(item,'charge_power_W','scenario.station_types.0.charge_power_W',properties));
+  holder.append(row);
+}
 function renderForms() {
-  const s=config.scenario, properties=schema.$defs.ScenarioConfig.properties;
-  numericFields('mission-fields',s,['required_gsd_m','delta_t','min_altitude_m','max_altitude_m','coverage_lambda','horizon'],'scenario',properties);
+  const s=config.scenario,properties=schema.$defs.ScenarioConfig.properties;
+  numericFields('mission-fields',s,['required_gsd_m','min_altitude_m','max_altitude_m','coverage_lambda'],'scenario',properties);
+  numericFields('episode-fields',s,['delta_t','horizon'],'scenario',properties);
   numericFields('grid-fields',s,['grid_size','observation_size'],'scenario',properties);
-  renderTypes('uav');renderTypes('station');renderLaunchFields();
-  $('scenario-mode').value=s.fleet_mode;
-  $('sampling-fields').hidden=s.fleet_mode!=='variable';
-  numericFields('sampling-fields',s,['min_uavs','max_uavs','min_stations','max_stations'],'scenario',properties,()=>renderLaunchFields());
-  $('place-station').disabled=s.station_mode==='variable';$('clear-docks').disabled=s.station_mode==='variable';
+  renderUAVs();renderStation();
   const main=['total_steps','num_envs','rollout_steps','evaluation_frequency','evaluation_episodes','evaluation_horizon','checkpoint_frequency','seed'];
   numericFields('training-fields',config.training,main,'training',schema.$defs.TrainConfig.properties);
   numericFields('ppo-fields',config.training,Object.keys(config.training).filter(k=>!main.includes(k)&&k!=='device'),'training',schema.$defs.TrainConfig.properties);
@@ -224,19 +260,20 @@ function drawPolygon(points) {
   if(!map)return;if(polygonLayer)polygonLayer.remove();
   polygonLayer=L.polygon(points.map(p=>[p[1],p[0]]),{color:'#dc9d49',weight:2,fillColor:'#dc9d49',fillOpacity:.1}).addTo(map);
 }
+const uavSymbol='<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="5.5" cy="5.5" r="3.4"/><circle cx="18.5" cy="5.5" r="3.4"/><circle cx="5.5" cy="18.5" r="3.4"/><circle cx="18.5" cy="18.5" r="3.4"/><path d="m8 8 8 8m0-8-8 8"/><rect x="9" y="8" width="6" height="8" rx="2" fill="currentColor"/></g></svg>';
+function uavIcon(index,status,atDock){return L.divIcon({className:'uav-marker '+status,html:uavSymbol+'<span class="uav-number">'+(index+1)+'</span>',iconSize:[32,32],iconAnchor:atDock?[-25,16]:[16,16]});}
 const batteryIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6v2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2Zm-2 4v14h10V6H7Zm2 7 3-5v4h3l-3 6v-5H9Z"/></svg>';
 function dockIcon(index) {return L.divIcon({className:'dock-marker',html:batteryIcon+'<span class="dock-number">'+(index+1)+'</span>',iconSize:[30,30],iconAnchor:[15,15]});}
 function drawDocks() {if(!markerGroup)return;markerGroup.clearLayers();dockPoints.forEach((point,index)=>L.marker([point.geographic[1],point.geographic[0]],{icon:dockIcon(index)}).addTo(markerGroup).bindTooltip('Dock '+(index+1)));}
 function syncDocks() {
   config.scenario.station_positions_wgs84=dockPoints.map(p=>p.geographic);
   config.scenario.station_position_types=dockPoints.map(()=>0);config.scenario.station_positions_xy=[];
-  config.scenario.station_types[0].fixed_count=dockPoints.length;
-  config.scenario.station_types[0].available_count=Math.max(config.scenario.station_types[0].available_count,dockPoints.length);
-  renderTypes('station');renderLaunchFields();drawDocks();changed();
+  renderLaunchFields();drawDocks();changed();
 }
+function uavLabel(u){const id='UAV '+((u.inventory_index??u.id)+1);return id+(u.type&&u.type!==id?' · '+u.type:'');}
 function applyFrame(frame,fit=false){lastFrame=frame;const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this decision · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-p10').textContent=c.p10.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';$('area-summary').textContent=`${(frame.area_m2/10000).toFixed(2)} ha · ${frame.cell_size_m.toFixed(3)} m cells`;
-  $('fleet-status').innerHTML=frame.uavs.map(u=>`<div class="uav-status"><span class="status-dot ${escapeHTML(u.status)}"></span><strong>UAV ${(u.inventory_index??u.id)+1}</strong><span>${Math.round(u.battery_ratio*100)}% · ${escapeHTML(u.status)}</span></div>`).join('');
-  if(!map)return;drawPolygon(frame.polygon_wgs84);if(fit)map.fitBounds(polygonLayer.getBounds().pad(.2));markerGroup.clearLayers();for(const [i,s] of frame.stations.entries()){L.marker([s.geographic[1],s.geographic[0]],{icon:dockIcon(i)}).addTo(markerGroup).bindTooltip(`Dock ${i+1}${s.reserved!==null?' · reserved':''}${s.occupied!==null?' · charging':''}`);}for(const u of frame.uavs){if(u.status==='queued')continue;L.marker([u.geographic[1],u.geographic[0]],{icon:L.divIcon({className:'uav-marker '+u.status,html:String((u.inventory_index??u.id)+1),iconSize:[22,22],iconAnchor:frame.stations.some(s=>Math.hypot(s.position[0]-u.position[0],s.position[1]-u.position[1])<1)?[-25,11]:[11,11]})}).addTo(markerGroup).bindTooltip(`UAV ${(u.inventory_index??u.id)+1} · ${u.position[2].toFixed(1)} m · ${Math.round(u.battery_ratio*100)}%`);}
+  $('fleet-status').innerHTML=frame.uavs.map(u=>`<div class="uav-status"><span class="status-dot ${escapeHTML(u.status)}"></span><strong>${escapeHTML(uavLabel(u))}</strong><span>${Math.round(u.battery_ratio*100)}% · ${escapeHTML(u.status)}</span></div>`).join('');
+  if(!map)return;drawPolygon(frame.polygon_wgs84);if(fit)map.fitBounds(polygonLayer.getBounds().pad(.2));markerGroup.clearLayers();for(const [i,s] of frame.stations.entries()){L.marker([s.geographic[1],s.geographic[0]],{icon:dockIcon(i)}).addTo(markerGroup).bindTooltip(`Dock ${i+1}${s.reserved!==null?' · reserved':''}${s.occupied!==null?' · charging':''}`);}for(const u of frame.uavs){if(u.status==='queued')continue;L.marker([u.geographic[1],u.geographic[0]],{icon:uavIcon(u.inventory_index??u.id,u.status,frame.stations.some(s=>Math.hypot(s.position[0]-u.position[0],s.position[1]-u.position[1])<1))}).addTo(markerGroup).bindTooltip(`${escapeHTML(uavLabel(u))} · ${u.position[2].toFixed(1)} m · ${Math.round(u.battery_ratio*100)}%`);}
   const size=frame.heatmap.length,canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;const ctx=canvas.getContext('2d'),pixels=ctx.createImageData(size,size);for(let row=0;row<size;row++)for(let col=0;col<size;col++){const value=frame.heatmap[row][col],offset=((size-1-row)*size+col)*4;pixels.data[offset]=235;pixels.data[offset+1]=165;pixels.data[offset+2]=65;pixels.data[offset+3]=Math.round(Math.min(1,value*4)*170*frame.heatmap_mask[row][col]);}ctx.putImageData(pixels,0,0);if(heatLayer)heatLayer.remove();heatLayer=L.imageOverlay(canvas.toDataURL(),frame.bounds_wgs84.map(p=>[p[1],p[0]]),{opacity:.8,interactive:false}).addTo(map);polygonLayer.bringToFront();}
 async function validate(){if(!await checkFields())throw Error('Correct the highlighted fields.');const result=await api('/api/validate',config);setMode('idle');applyFrame(result.frame,true);return result;}
 function pause(){playing=false;playGeneration++;$('play-simulation').textContent='Play';}
@@ -246,18 +283,18 @@ async function play(){if(playing){pause();return;}playing=true;const generation=
 function diagnostics(metrics){if(!metrics)return;const fields=[['Policy loss','actor_loss'],['Critic loss','value_loss'],['Gaussian entropy','entropy'],['Approximate KL','approximate_kl'],['Explained variance','explained_variance'],['Coverage actor fraction','actor_sample_fraction'],['Energy · Wh/decision','energy_Wh_per_step'],['Projection fraction','reward_projection'],['Collision fraction','reward_collision'],['Crashed fraction','reward_crash']];$('training-diagnostics').innerHTML='<dl>'+fields.map(([label,key])=>`<div><dt>${label}</dt><dd>${Number(metrics[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';}
 function chart(id,history,key,color){const canvas=$(id),ratio=window.devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=170*ratio;const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);const w=canvas.clientWidth,h=170;ctx.clearRect(0,0,w,h);if(!history.length)return;const values=history.map(x=>x[key]),min=Math.min(0,...values),max=Math.max(.01,...values);ctx.strokeStyle='#344c5e';ctx.fillStyle='#9ab0c0';ctx.font='11px Segoe UI';for(let i=0;i<3;i++){const y=15+i*58;ctx.beginPath();ctx.moveTo(45,y);ctx.lineTo(w-8,y);ctx.stroke();ctx.fillText((max-(max-min)*i/2).toFixed(2),3,y+3);}ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();history.forEach((point,index)=>{const x=45+(w-58)*index/Math.max(1,history.length-1),y=15+116*(1-(point[key]-min)/(max-min||1));index?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();ctx.fillText('0',45,160);ctx.fillText(history.at(-1).steps.toLocaleString()+' steps',Math.max(45,w-100),160);}
 async function poll(){try{const job=await api('/api/training/status');activeJob=['starting','running','stopping'].includes(job.status);$('job-badge').textContent=job.status==='idle'?'Ready':job.status[0].toUpperCase()+job.status.slice(1);$('connection-status').textContent='Local backend connected';$('start-training').disabled=activeJob;$('stop-training').disabled=!activeJob;if(job.total_steps){$('progress-fill').style.width=Math.min(100,100*job.steps/job.total_steps)+'%';$('progress-text').textContent=`${(job.steps||0).toLocaleString()} / ${job.total_steps.toLocaleString()} steps${job.metrics?' · '+job.metrics.steps_per_second.toFixed(1)+' steps/s':''}`;}if(job.frame&&currentTab==='training')applyFrame(job.frame);diagnostics(job.metrics);chart('coverage-chart',job.history||[],'mean_coverage','#e9b36c');chart('reward-chart',job.history||[],'mean_step_reward','#8cb9cd');if(job.status==='failed'&&job.error!==poll.lastError){notice(job.error,true);poll.lastError=job.error;}}catch(e){$('connection-status').textContent='Backend disconnected';}setTimeout(poll,1000);}
-async function loadRuns(){const runs=await api('/api/runs');$('run-list').innerHTML='';if(!runs.length){$('run-list').innerHTML='<p class="muted">No runs yet. Start an experiment in Training.</p>';return;}for(const run of runs){const item=document.createElement('div');item.className='run-block';const evaluation=run.evaluation;item.innerHTML=`<h3>${escapeHTML(run.run_id)}</h3><p>${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No scheduled evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a></div>`;item.querySelector('.replay').onclick=async()=>{try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint:item.querySelector('select').value});pause();setMode('idle');config=result.config;dockPoints=result.frame.stations.map(s=>({type:s.type_index,geographic:s.geographic}));renderForms();simulationReady=true;applyFrame(result.frame,true);$('simulation-policy').value='model';setTab('mission');notice('Saved policy loaded. Use Step or Play to replay.');}catch(e){notice(e.message,true);}};item.querySelector('.evaluate').onclick=async(event)=>{event.target.disabled=true;try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/evaluate`,{checkpoint:item.querySelector('select').value,episodes:config.training.evaluation_episodes});applyFrame(result.frame,true);notice(`Evaluation: return ${result.return_mean.toFixed(2)} · mean quality ${result.coverage_mean.toFixed(3)} · crashes ${result.crashed_uavs.toFixed(1)}`);}catch(e){notice(e.message,true);}finally{event.target.disabled=false;}};$('run-list').append(item);}}
+async function loadRuns(){const runs=await api('/api/runs');$('run-list').innerHTML='';if(!runs.length){$('run-list').innerHTML='<p class="muted">No runs yet. Start an experiment in Training.</p>';return;}for(const run of runs){const item=document.createElement('div');item.className='run-block';const evaluation=run.evaluation;item.innerHTML=`<h3>${escapeHTML(run.run_id)}</h3><p>${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No scheduled evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a></div>`;item.querySelector('.replay').onclick=async()=>{try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint:item.querySelector('select').value});pause();setMode('idle');config=result.config;normalizeMission(config.scenario,result.frame);dockPoints=result.frame.stations.map(s=>({type:s.type_index,geographic:s.geographic}));renderForms();simulationReady=true;applyFrame(result.frame,true);$('simulation-policy').value='model';setTab('mission');notice('Saved policy loaded. Use Step or Play to replay.');}catch(e){notice(e.message,true);}};item.querySelector('.evaluate').onclick=async(event)=>{event.target.disabled=true;try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/evaluate`,{checkpoint:item.querySelector('select').value,episodes:config.training.evaluation_episodes});applyFrame(result.frame,true);notice(`Evaluation: return ${result.return_mean.toFixed(2)} · mean quality ${result.coverage_mean.toFixed(3)} · crashes ${result.crashed_uavs.toFixed(1)}`);}catch(e){notice(e.message,true);}finally{event.target.disabled=false;}};$('run-list').append(item);}}
 
 async function initialize() {
   try {
-    const response=await api('/api/defaults');defaults=response.config;schema=response.schema;config=structuredClone(defaults);renderForms();
+    const response=await api('/api/defaults');defaults=response.config;schema=response.schema;presets=response.presets;config=structuredClone(defaults);normalizeMission(config.scenario);renderForms();
     if(window.L) {
       map=L.map('map',{doubleClickZoom:false}).setView([40.63,22.94],15);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
       markerGroup=L.layerGroup().addTo(map);
       map.on('click',event=>{
         if(mode==='draw'){draft.push([event.latlng.lng,event.latlng.lat]);drawPolygon(draft);}
-        else if(mode==='dock'){dockPoints.push({type:0,geographic:[event.latlng.lng,event.latlng.lat]});syncDocks();}
+        else if(mode==='dock'){if(dockPoints.length>=dockCount()){notice('All docks are placed.');return;}dockPoints.push({type:0,geographic:[event.latlng.lng,event.latlng.lat]});syncDocks();}
       });
       map.on('mousemove',event=>{
         if(mode==='draw'&&draft.length){previewLayer?.remove();previewLayer=L.polyline([[draft.at(-1)[1],draft.at(-1)[0]],event.latlng],{color:'#e4b46d',weight:1,dashArray:'5 6'}).addTo(map);}
@@ -271,14 +308,13 @@ async function initialize() {
     const initial=await api('/api/validate',config);applyFrame(initial.frame,true);
     dockPoints=initial.frame.stations.map(s=>({type:0,geographic:s.geographic}));
     document.querySelectorAll('nav button').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));
-    $('scenario-mode').onchange=()=>{config.scenario.fleet_mode=config.scenario.station_mode=$('scenario-mode').value;renderForms();changed();};
     action('validate',validate);action('reset-simulation',()=>reset());action('step-simulation',step);$('play-simulation').onclick=play;
     action('draw-area',()=>{pause();draft=[];simulationReady=false;setMode('draw');polygonLayer?.remove();heatLayer?.remove();});
     action('place-station',()=>setMode(mode==='dock'?'idle':'dock'));
     action('clear-docks',()=>{dockPoints=[];syncDocks();});
     action('add-uav',()=>{
-      config.scenario.uav_types.push({...structuredClone(defaults.scenario.uav_types[0]),name:'UAV type '+(config.scenario.uav_types.length+1),available_count:1,fixed_count:1});
-      config.scenario.uav_launch_docks?.push(0);renderTypes('uav');renderLaunchFields();changed();
+      config.scenario.uav_types.push({...structuredClone(presets.uavs[0].values),name:'UAV '+(config.scenario.uav_types.length+1)});
+      config.scenario.uav_launch_docks.push(0);renderUAVs();changed();
     });
     action('start-training',async()=>{pause();await validate();await api('/api/training/start',config);});
     action('stop-training',async()=>{await api('/api/training/stop',{});});

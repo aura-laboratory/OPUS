@@ -12,6 +12,7 @@ class Config(BaseModel):
 
 class UAVType(Config):
     name: str = Field("Mavic 3E reference", min_length=1, max_length=100)
+    preset_id: str | None = Field(None, max_length=50)
     available_count: int = Field(2, ge=1, le=128)
     fixed_count: int = Field(2, ge=0, le=128)
     max_horizontal_speed_mps: float = Field(15, gt=0)
@@ -58,6 +59,7 @@ class UAVType(Config):
 
 class StationType(Config):
     name: str = Field("DJI Dock 3 reference", min_length=1, max_length=100)
+    preset_id: str | None = Field(None, max_length=50)
     available_count: int = Field(2, ge=1, le=128)
     fixed_count: int = Field(2, ge=0, le=128)
     # Effective battery-side average: 149.9 Wh × (95% − 15%) / (27 min / 60).
@@ -104,8 +106,10 @@ class ScenarioConfig(Config):
     station_positions_wgs84: list[tuple[float, float]] | None = None
     station_position_types: list[int] | None = None
     uav_launch_docks: list[int] | None = None  # Inventory-slot order; zero-based dock IDs.
-    uav_types: list[UAVType] = Field(default_factory=lambda: [UAVType()], min_length=1)
-    station_types: list[StationType] = Field(default_factory=lambda: [StationType()], min_length=1, max_length=1)
+    uav_types: list[UAVType] = Field(default_factory=lambda: [
+        UAVType(name=f"UAV {j}", preset_id="mavic-3e", available_count=1, fixed_count=1) for j in (1, 2)
+    ], min_length=1)
+    station_types: list[StationType] = Field(default_factory=lambda: [StationType(preset_id="dji-dock-3")], min_length=1, max_length=1)
     fleet_mode: Literal["fixed", "variable"] = "fixed"
     station_mode: Literal["fixed", "variable"] = "fixed"
     min_uavs: int = Field(1, ge=1)
