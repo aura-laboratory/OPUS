@@ -66,6 +66,8 @@ The original saved best checkpoint still loads and evaluates to return 40.828 an
 
 The individual-UAV editor was checked with three separate Mavic 3E cards, per-aircraft name/preset changes, removal of the middle aircraft, dock-preset selection, and a one-dock mission. A 4-second step interval edited under Training produced a 4-second simulation step. Numbered blue drone symbols and green battery markers retain their geographic anchors. No inventory count controls or station Properties dropdown remain in the browser.
 
+The shared section frames, nested cards, heading gaps, and input spacing were visually checked across Mission, Training and Runs. Training dropdowns, chart frames, progress controls and saved-run checkpoint/action rows use the same hierarchy.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

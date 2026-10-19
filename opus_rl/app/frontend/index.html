@@ -13,33 +13,34 @@
 <main>
 <aside>
   <section id="mission-controls">
-    <div class="group mission-group"><h2>Area of interest</h2>
+    <div class="group"><h2>Area of interest</h2>
       <div id="area-summary" class="muted"></div>
       <div class="toolbar"><button id="draw-area">Draw area</button></div>
       <small class="field-error" data-error-path="scenario.polygon_wgs84" hidden></small>
       <div id="mission-fields" class="fields"></div>
     </div>
-    <div class="group mission-group uavs-group"><h2>UAVs <button id="add-uav" class="text-button">+UAV</button></h2>
+    <div class="group"><h2>UAVs <button id="add-uav" class="text-button">+UAV</button></h2>
       <div id="uav-types"></div>
     </div>
-    <div class="group mission-group"><h2>Charging stations</h2><div id="station-types"></div>
+    <div class="group"><h2>Charging stations</h2><div id="station-types"></div>
       <div class="toolbar"><button id="place-station">Place docks</button><button id="clear-docks" class="text-button">Clear</button></div>
       <small class="field-error" data-error-path="scenario.station_positions_wgs84" hidden></small>
     </div>
-    <details class="group mission-group"><summary>Grid</summary><div id="grid-fields" class="fields"></div></details>
+    <details class="group"><summary>Grid</summary><div id="grid-fields" class="fields"></div></details>
     <button id="validate" class="primary full">Validate mission</button>
   </section>
   <section id="training-controls" hidden>
-    <div id="episode-fields" class="fields"></div>
-    <div id="training-fields" class="fields"></div>
+    <div class="group"><h2>Episode</h2><div id="episode-fields" class="fields"></div></div>
+    <div class="group"><h2>Training</h2><div id="training-fields" class="fields"></div></div>
     <details class="group"><summary>MAPPO</summary><div id="ppo-fields" class="fields"></div></details>
     <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div></details>
-    <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop &amp; save</button></div>
-    <div id="training-progress" class="group"><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p></div>
+    <div id="training-progress" class="group"><h2>Progress</h2><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p>
+      <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop &amp; save</button></div>
+    </div>
     <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"></div></details>
   </section>
   <section id="runs-controls" hidden>
-    <h2>Saved runs</h2><button id="refresh-runs">Refresh</button><div id="run-list"></div>
+    <div class="group"><h2>Saved runs <button id="refresh-runs" class="text-button">Refresh</button></h2><div id="run-list"></div></div>
   </section>
 </aside>
 <div class="workspace">
@@ -52,7 +53,7 @@
     <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button></div>
   <div class="metrics"><div><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div><span>Lowest 10%</span><strong id="metric-p10">0.000</strong></div><div><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div><span>Step reward</span><strong id="metric-reward">0.000</strong></div></div>
   <div id="safety-metrics" class="muted"></div>
-  <div id="charts" hidden><div><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage by training step"></canvas></div><div><h2>Reward</h2><canvas id="reward-chart" aria-label="Reward by training step"></canvas></div></div>
+  <div id="charts" hidden><div class="chart-card"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage by training step"></canvas></div><div class="chart-card"><h2>Reward</h2><canvas id="reward-chart" aria-label="Reward by training step"></canvas></div></div>
   <div id="fleet-status" class="fleet-strip"></div>
 </div>
 </main>
