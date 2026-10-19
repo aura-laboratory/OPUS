@@ -93,3 +93,30 @@ def test_field_validation_and_shared_dock_configuration(tmp_path):
         result = client.post('/api/validate', json=data)
         assert result.status_code == 200
         assert [u['status'] for u in result.json()['frame']['uavs']] == ['charging','queued']
+
+
+def test_interface_refresh_uses_current_assets_without_caching(tmp_path, monkeypatch):
+    from opus_rl.app import server
+
+    frontend = tmp_path / 'frontend'
+    frontend.mkdir()
+    (frontend / 'index.html').write_text(
+        '<link href="/static/style.css"><script src="/static/app.js"></script>', encoding='utf8')
+    (frontend / 'style.css').write_text('body {color: white}', encoding='utf8')
+    (frontend / 'app.js').write_text('const revision = 1;', encoding='utf8')
+    monkeypatch.setattr(server, 'FRONTEND', frontend)
+    with TestClient(create_app(tmp_path / 'runs')) as client:
+        first = client.get('/')
+        revision = client.get('/api/health').json()['frontend_revision']
+        assert first.headers['cache-control'] == 'no-store'
+        assert f'/static/app.js?v={revision}' in first.text
+        assert f'/static/style.css?v={revision}' in first.text
+        asset = client.get(f'/static/app.js?v={revision}')
+        assert asset.headers['cache-control'] == 'no-store'
+        assert asset.text == 'const revision = 1;'
+        (frontend / 'app.js').write_text('const revision = 2;', encoding='utf8')
+        second = client.get('/')
+        next_revision = client.get('/api/health').json()['frontend_revision']
+        assert next_revision != revision
+        assert f'/static/app.js?v={next_revision}' in second.text
+        assert client.get(f'/static/app.js?v={next_revision}').text == 'const revision = 2;'

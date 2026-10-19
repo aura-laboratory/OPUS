@@ -11,17 +11,16 @@ from pathlib import Path
 import httpx
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from opus_rl.app import FRONTEND, frontend_revision
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
 from opus_rl.envs import OpusTeamEnv
 from opus_rl.training.evaluate import evaluate, heuristic_action
 from opus_rl.training.train import load_checkpoint, save_json, train
-
-FRONTEND = Path(__file__).parent / "frontend"
 
 
 class State:
@@ -72,7 +71,10 @@ def create_app(runs_root=None):
         origin = request.headers.get("origin")
         if request.method not in ("GET", "HEAD", "OPTIONS") and origin and origin != str(request.base_url).rstrip("/"):
             return JSONResponse({"detail": "Use the local OPUS page to submit requests."}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        # A local development app must not keep serving an earlier interface or API state.
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.exception_handler(ValueError)
     async def configuration_error(request, error):
@@ -80,7 +82,8 @@ def create_app(runs_root=None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "0.1.0", "local_only": True}
+        return {"status": "ok", "version": "0.1.0", "local_only": True,
+                "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
     def defaults():
@@ -259,13 +262,17 @@ def create_app(runs_root=None):
                     response.raise_for_status()
                     data = response.json()
             except (httpx.HTTPError, ValueError) as error:
-                raise HTTPException(502, "Place search is unavailable; navigate the map or import a scenario.") from error
+                raise HTTPException(502, "Place search is unavailable; navigate the map.") from error
             state.geocode_cache[query] = data
             return data
 
     @app.get("/")
     def index():
-        return FileResponse(FRONTEND / "index.html")
+        revision = frontend_revision(FRONTEND)
+        html = (FRONTEND / "index.html").read_text(encoding="utf8")
+        for name in ("app.js", "style.css"):
+            html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={revision}"')
+        return HTMLResponse(html)
 
     app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
     return app
