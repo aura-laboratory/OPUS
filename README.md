@@ -2,9 +2,9 @@
 
 Local research application for persistent multi-UAV area scanning. It combines a Gymnasium team environment, analytical motion/energy/camera models, a deterministic recharge scheduler, a shared MAPPO actor, a centralized critic, and a browser dashboard.
 
-![OPUS dashboard replaying a learned coverage policy](docs/dashboard.jpg)
+![OPUS mission dashboard with shared launch dock](docs/dashboard.jpg)
 
-*Example from the local dashboard: a trained policy scanning a 40 × 40 m demo area with one UAV. The overlay shows persistent coverage quality; the lower panel reports quality, battery, energy and safety metrics. This example demonstrates the training and replay pipeline; broader multi-UAV learning remains a research validation task.*
+*Mission setup, numbered charging docks, and persistent coverage in the local dashboard.*
 
 ## Start
 
@@ -38,13 +38,13 @@ The isolated environment is named **OPUS**. Activate it with `conda activate OPU
 
 ## Workflow
 
-1. Start with **Demo**, or search the map for a place. Choose **Draw area**, left-click vertices, and right-click to close the polygon. Completed vertices snap to the hidden metric coverage grid when validated.
-2. Define UAV and dock types, inventory counts, fixed/variable modes, camera requirements, and flight limits. **Place docks** adds locations using the selected dock type. Fixed mode needs one location for each selected dock; each initial UAV needs its own dock.
+1. Search the map for a place. Choose **Draw area**, left-click vertices, and right-click to close the polygon. Completed vertices snap to the coverage grid when validated; the area and cell-size figures update with the mission.
+2. Define UAV types and counts. **Available** is inventory; **In mission** is the number used in fixed mode. Place numbered docks and assign each UAV a **Launch dock**. Shared launch docks stage UAVs for sequential takeoff. Select **Fixed fleet** or **Sample from inventory** for the whole scenario. Camera and energy-model settings are grouped under UAV **Properties**. Reward weights are in **Training**; grids remain in **Mission**.
 3. Choose **Validate mission**. **Reset**, **Step**, and **Play** show a sweep baseline, random actions, or a loaded model. These controls do not train the actor.
 4. In **Training**, set the step budget, environment count, PPO parameters, evaluation and checkpoint intervals, and seed. **Start training** starts a local background job. **Stop & save** finishes the current calculation and writes a final checkpoint.
 5. **Runs** lists saved experiments. Select a checkpoint, replay it, run repeatable evaluation, or export a ZIP containing model/configuration/normalization/metrics/evaluation files.
 
-Scenario JSON can be imported/exported locally. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. The application does not upload scenarios, checkpoints, or experiment data.
+Scenario configurations are saved with each run. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. The application does not upload scenarios, checkpoints, or experiment data.
 
 ## Command line
 

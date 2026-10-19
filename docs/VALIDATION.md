@@ -4,7 +4,7 @@ Validated locally on 2026-10-09, using Python 3.11.17 and CPU PyTorch 2.14.1, on
 
 ## Automated checks
 
-**21 tests pass.** Ruff and JavaScript syntax checks pass. The suite covers:
+**27 tests pass** as of 2026-10-19. Ruff and JavaScript syntax checks pass. The suite covers:
 
 - Gymnasium signatures, spaces, deterministic resets, observation ownership and vector environments.
 - Fixed/variable typed inventory, padding and count limits.
@@ -53,6 +53,14 @@ Browser testing found and corrected stale numeric form values, a disabled Pause 
 ## Environment migration: 2026-10-15
 
 The original project-local `.conda` environment was cloned into the named **OPUS** environment at `C:\Users\thano\miniconda3\envs\OPUS`, preserving installed versions. Pip-generated console launchers were updated for the new interpreter location. All 21 tests, dependency consistency, lint, `conda activate OPUS`, the application launcher and the stop script were checked in the named environment. Setup, launch instructions and `environment.yml` now use OPUS. The old environment was removed after verification; saved runs remain in the project.
+
+## Interface and launch revision: 2026-10-19
+
+All 27 tests pass in the named OPUS environment. New checks cover per-inventory UAV launch assignments, shared-dock staging and sequential takeoff, full initial batteries, legacy configuration normalization, inline field validation, and fixed-mode independence from sampling bounds. The API training/save/reload/evaluate/export workflow passes with both separate and shared launch docks.
+
+Browser checks verified right-aligned units, nested energy/camera properties, reward weights under Training, red invalid fields with explanations, fixed/sampled selection, per-UAV dock selectors, numbered green battery markers, and two UAVs assigned to one placed dock. Changing the coverage grid from 1024 to 64 changed the displayed cell width from 0.156 m to 2.500 m for the same 2.56 ha area.
+
+The original saved best checkpoint still loads and evaluates to return 40.828 and mean coverage 0.644. This is a compatibility check; the new launch behavior has not undergone a new long training study.
 
 ## Remaining research limits
 

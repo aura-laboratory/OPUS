@@ -2,6 +2,8 @@
 
 The tracked system specification dated 2026-10-09 is the baseline. The following decisions make its remaining ambiguities executable. The agreed coverage, altitude, interval, horizon, and reward defaults remain unchanged.
 
+The user revision of 2026-10-19 supersedes the baseline's one-UAV-per-dock constraint and configurable initial charge: launch docks are assigned per UAV, shared launches are staged, and every UAV starts fully charged. The UI uses one dock type and a single fixed/sampled inventory selector.
+
 ## Motion and boundary feasibility
 
 Policy actions map to a rest-to-rest displacement ellipsoid. Horizontal and vertical radii come from the acceleration-limited triangular/trapezoidal motion profile over ΔT. The backend additionally enforces the limits along the requested 3D direction. Every feasible coverage waypoint is reached within the decision interval and ends with zero velocity. Any remaining time incurs airborne baseline power. This deliberately permits stopped endpoints rather than instant direction changes at nonzero velocity.
@@ -26,11 +28,15 @@ At λ=0.9 and ΔT=5 s, coverage half-life is about 32.9 s. Large-area performanc
 
 ## Inventory and recharge
 
-Sampling is without replacement from typed inventory. Station counts are sampled conditional on fleet size; this avoids silently creating impossible initial assignments. Station locations need sufficient collision separation. All UAVs initially occupy separate stations, and begin automatic takeoff when fully charged. Charging uses the specified linear power model with an unlimited external supply.
+Sampling is without replacement from typed UAV inventory. Launch assignments use stable inventory-slot IDs, with zero-based dock IDs in JSON and one-based numbers in the UI. Fixed mode uses the selected count from each type; variable mode samples available slots. Sampled station counts respect the launch docks required by that sampled fleet. There is no longer a one-UAV-per-dock fleet limit.
+
+All UAVs start at 100% charge. Docks have an unlimited external supply. Multiple UAVs assigned to one dock are staged off the physical berth: one occupies the pad and the others wait with no actor actions or energy draw. Queued UAVs are excluded from collision trajectories and map markers until launch; their observation uses the existing charging status encoding to retain checkpoint dimensions. Takeoff waits for the berth and launch column to clear. Each dock still charges one aircraft at a time.
+
+The single dock-type default is **DJI Dock 3 reference**. DJI reports a 149.9 Wh aircraft battery and 15–95% charging in 27 minutes. The simulator uses a derived constant battery-side average of **266.49 W**: 149.9 × 0.80 / (27/60). This is an approximation, distinct from the dock's 800 W maximum mains input. Hardware compatibility, charge taper and cooling are not modeled. Source: [DJI Dock 3 specifications](https://enterprise.dji.com/dock-3/specs).
 
 The scheduler considers available, unreserved, directly visible docks, chooses the nearest, and estimates return energy using the same analytical rest-to-rest chunks as executed transit. It includes landing overhead and the configured reserve ratio. A proposed actor action is overridden if the resulting battery/position cannot preserve a safe return reserve. Selection happens before movement, in battery-ratio order; reservations prevent concurrent assignment conflicts.
 
-When no unreserved visible dock exists, coverage continues and a no-station diagnostic is emitted; eventual battery depletion crashes the UAV. Queuing, earliest-release planning, and paths around concave corners remain future extensions. Dock landing radius describes the approach transition; charging still requires reaching the exact dock. Constant one-time takeoff/landing energy costs supplement analytic flight consumption. Transit and takeoff operate under the same velocity/acceleration limits, with altitude exemption.
+When no unreserved visible dock exists, coverage continues and a no-station diagnostic is emitted; eventual battery depletion crashes the UAV. Recharge queuing, earliest-release planning, and paths around concave corners remain future extensions. Landing approach tolerance uses the current UAV's effective radius; charging still requires reaching the exact dock. Constant one-time takeoff/landing energy costs supplement analytic flight consumption. Transit and takeoff operate under the same velocity/acceleration limits, with altitude exemption.
 
 ## MAPPO and reproducibility
 

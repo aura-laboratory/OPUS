@@ -202,6 +202,7 @@ class UAV:
     yaw_acceleration: float = 0.0
     gimbal_rate: float = 0.0
     station: int | None = None
+    inventory_index: int | None = None
 
 
 @dataclass

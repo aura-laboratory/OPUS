@@ -68,9 +68,19 @@ class OpusTeamEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         cfg = self.config
-        fleet = self._inventory(cfg.uav_types, cfg.fleet_mode, cfg.min_uavs, cfg.max_uavs)
+        inventory = [j for j, kind in enumerate(cfg.uav_types) for _ in range(kind.available_count)]
+        if cfg.fleet_mode == "variable":
+            count = int(self.np_random.integers(cfg.min_uavs, (cfg.max_uavs or self.n_max) + 1))
+            slots = sorted(self.np_random.choice(self.n_max, count, replace=False).tolist())
+        else:
+            slots, offset = [], 0
+            for kind in cfg.uav_types:
+                slots.extend(range(offset, offset + kind.fixed_count))
+                offset += kind.available_count
+        fleet = [inventory[j] for j in slots]
+        required_docks = max((cfg.uav_launch_docks[j] + 1 for j in slots), default=1) if cfg.uav_launch_docks else 1
         dock_types = self._inventory(cfg.station_types, cfg.station_mode, cfg.min_stations,
-                                     cfg.max_stations, len(fleet))
+                                     cfg.max_stations, required_docks)
         if cfg.station_mode == "fixed" and cfg.station_position_types is not None:
             dock_types = cfg.station_position_types
         separation = 2 * max(t.collision_radius_m for t in cfg.uav_types) + 0.5
@@ -82,16 +92,18 @@ class OpusTeamEnv(gym.Env):
                 if any(np.linalg.norm(xy - previous) < separation for previous in positions[:j]):
                     raise ValueError(f"Stations must be at least {separation:g} m apart for this inventory.")
         self.stations = [Station(np.r_[xy, 0.0], kind, cfg.station_types[kind].charge_power_W,
-                                 cfg.station_types[kind].landing_radius_m)
+                                 max(t.collision_radius_m for t in cfg.uav_types))
                          for xy, kind in zip(positions, dock_types)]
-        assignment = self.np_random.permutation(len(self.stations))[:len(fleet)]
+        assignment = [cfg.uav_launch_docks[j] if cfg.uav_launch_docks else j % len(self.stations) for j in slots]
         self.uavs = []
         for j, (kind, station_index) in enumerate(zip(fleet, assignment)):
             spec = cfg.uav_types[kind]
             self.uavs.append(UAV(spec, kind, self.stations[station_index].position.copy(),
-                                 spec.battery_capacity_Wh * spec.initial_battery_ratio,
-                                 station=int(station_index)))
-            self.stations[station_index].occupied = j
+                                 spec.battery_capacity_Wh, station=int(station_index), inventory_index=slots[j]))
+            if self.stations[station_index].occupied is None:
+                self.stations[station_index].occupied = j
+            else:
+                self.uavs[-1].status = "queued"
         self.coverage.fill(0)
         self.last_gsd.fill(np.nan)
         self.step_index, self.finished = 0, False
@@ -130,6 +142,17 @@ class OpusTeamEnv(gym.Env):
     def _controlled_motion(self, index, uav):
         cfg, spec = self.config, uav.spec
         overhead = 0.0
+        if uav.status == "queued":
+            dock = self.stations[uav.station]
+            if dock.occupied is not None or dock.reserved is not None:
+                return None
+            if any(other.status not in ("queued", "crashed") and other is not uav
+                   and np.linalg.norm(other.position[:2] - dock.position[:2]) <
+                   spec.collision_radius_m + other.spec.collision_radius_m + 0.5
+                   and other.position[2] <= cfg.min_altitude_m + spec.collision_radius_m + other.spec.collision_radius_m
+                   for other in self.uavs):
+                return None
+            dock.occupied, uav.status = index, "charging"
         if uav.status == "charging":
             if uav.battery < spec.battery_capacity_Wh - 1e-8:
                 dock = self.stations[uav.station]
@@ -146,7 +169,7 @@ class OpusTeamEnv(gym.Env):
         else:
             dock = self.stations[uav.station]
             target = dock.position.copy()
-            if np.linalg.norm(uav.position[:2] - target[:2]) <= dock.radius:
+            if np.linalg.norm(uav.position[:2] - target[:2]) <= spec.collision_radius_m:
                 uav.status = "landing"
             if np.linalg.norm(target - uav.position) < 1e-7:
                 uav.status = "charging"
@@ -202,7 +225,7 @@ class OpusTeamEnv(gym.Env):
                 movements[index] = movement
         # Include stationary grounded UAVs in synchronized separation checks.
         trajectories = {j: movements.get(j) or self.backend.propagate(u.position, u.position, u.spec, dt)
-                        for j, u in enumerate(self.uavs) if u.status != "crashed"}
+                        for j, u in enumerate(self.uavs) if u.status not in ("crashed", "queued")}
         collision_times, collisions = {}, []
         for i in trajectories:
             for j in trajectories:
@@ -293,7 +316,8 @@ class OpusTeamEnv(gym.Env):
                          uav.gimbal_rate / np.deg2rad(spec.max_gimbal_pitch_rate_degps),
                          uav.battery / spec.battery_capacity_Wh, spec.reserve_battery_ratio,
                          float(uav.status == "coverage"), float(uav.status == "crashed"), 1.0]
-        status = [float(uav.status == s) for s in STATUSES]
+        # Queued UAVs are staged off the berth; retain checkpoint-compatible observation dimensions.
+        status = [float(("charging" if uav.status == "queued" else uav.status) == s) for s in STATUSES]
         properties = np.array([getattr(spec, f) for f in TYPE_FIELDS])
         properties = properties / (properties + TYPE_SCALES)
         camera = [spec.gimbal_pitch_min_deg / 90, spec.gimbal_pitch_max_deg / 90,
@@ -355,7 +379,9 @@ class OpusTeamEnv(gym.Env):
     def frame(self):
         stride = max(1, self.config.grid_size // 64)
         heatmap = fuse(self.coverage, self.area.mask, self.config.grid_size // stride)
-        return {"info": self.last_info, "uavs": [{"id": j, "position": u.position.tolist(),
+        return {"info": self.last_info, "uavs": [{"id": j, "inventory_index": u.inventory_index,
+                  "launch_dock": self.config.uav_launch_docks[u.inventory_index] if self.config.uav_launch_docks
+                  else u.inventory_index % len(self.stations), "position": u.position.tolist(),
                   "geographic": self.area.geographic(u.position[None, :2])[0].tolist(),
                   "battery_ratio": u.battery / u.spec.battery_capacity_Wh,
                   "yaw": u.yaw, "gimbal": u.gimbal, "type": u.spec.name, "status": u.status}

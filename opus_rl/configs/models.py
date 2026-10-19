@@ -11,7 +11,7 @@ class Config(BaseModel):
 
 
 class UAVType(Config):
-    name: str = "Mavic 3E reference"
+    name: str = Field("Mavic 3E reference", min_length=1, max_length=100)
     available_count: int = Field(2, ge=1, le=128)
     fixed_count: int = Field(2, ge=0, le=128)
     max_horizontal_speed_mps: float = Field(15, gt=0)
@@ -25,7 +25,6 @@ class UAVType(Config):
     gimbal_pitch_min_deg: float = Field(-90, ge=-90, le=90)
     gimbal_pitch_max_deg: float = Field(35, ge=-90, le=90)
     battery_capacity_Wh: float = Field(77, gt=0)
-    initial_battery_ratio: float = Field(1, gt=0, le=1)
     reserve_battery_ratio: float = Field(0.15, ge=0, lt=1)
     P_airborne_base_W: float = Field(121.6, gt=0)
     k_vxy: float = Field(0.05, ge=0)
@@ -40,6 +39,14 @@ class UAVType(Config):
     camera_fov_deg: float = Field(84, gt=1, lt=175)
     camera_fov_axis: Literal["diagonal", "horizontal"] = "diagonal"
 
+    @model_validator(mode="before")
+    @classmethod
+    def remove_legacy_initial_charge(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("initial_battery_ratio", None)
+        return data
+
     @model_validator(mode="after")
     def consistent(self):
         if self.fixed_count > self.available_count:
@@ -50,11 +57,19 @@ class UAVType(Config):
 
 
 class StationType(Config):
-    name: str = "100 W dock"
+    name: str = Field("DJI Dock 3 reference", min_length=1, max_length=100)
     available_count: int = Field(2, ge=1, le=128)
     fixed_count: int = Field(2, ge=0, le=128)
-    charge_power_W: float = Field(100, gt=0)
-    landing_radius_m: float = Field(1.5, gt=0)
+    # Effective battery-side average: 149.9 Wh × (95% − 15%) / (27 min / 60).
+    charge_power_W: float = Field(266.49, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_legacy_landing_radius(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("landing_radius_m", None)
+        return data
 
     @model_validator(mode="after")
     def consistent(self):
@@ -88,8 +103,9 @@ class ScenarioConfig(Config):
     station_positions_xy: list[tuple[float, float]] = Field(default_factory=lambda: [(20, 20), (140, 140)])
     station_positions_wgs84: list[tuple[float, float]] | None = None
     station_position_types: list[int] | None = None
+    uav_launch_docks: list[int] | None = None  # Inventory-slot order; zero-based dock IDs.
     uav_types: list[UAVType] = Field(default_factory=lambda: [UAVType()], min_length=1)
-    station_types: list[StationType] = Field(default_factory=lambda: [StationType()], min_length=1)
+    station_types: list[StationType] = Field(default_factory=lambda: [StationType()], min_length=1, max_length=1)
     fleet_mode: Literal["fixed", "variable"] = "fixed"
     station_mode: Literal["fixed", "variable"] = "fixed"
     min_uavs: int = Field(1, ge=1)
@@ -120,14 +136,24 @@ class ScenarioConfig(Config):
             raise ValueError("v1 supports at most 128 UAV and station inventory slots.")
         max_fleet = self.max_uavs or owned
         max_docks = self.max_stations or stations
-        if not self.min_uavs <= max_fleet <= owned or not self.min_stations <= max_docks <= stations:
+        if ((self.fleet_mode == "variable" and not self.min_uavs <= max_fleet <= owned)
+                or (self.station_mode == "variable" and not self.min_stations <= max_docks <= stations)):
             raise ValueError("Variable count bounds must fit the available inventory.")
         fixed_fleet = sum(t.fixed_count for t in self.uav_types)
         fixed_docks = sum(t.fixed_count for t in self.station_types)
         fleet_max = fixed_fleet if self.fleet_mode == "fixed" else max_fleet
         docks_max = fixed_docks if self.station_mode == "fixed" else max_docks
-        if fleet_max < 1 or docks_max < fleet_max:
-            raise ValueError("Each active UAV needs a distinct initial station.")
+        if fleet_max < 1 or docks_max < 1:
+            raise ValueError("Choose at least one active UAV and one active dock.")
+        if self.uav_launch_docks is not None:
+            if len(self.uav_launch_docks) != owned:
+                raise ValueError("Choose a launch dock for every UAV in the available inventory.")
+            slots, offset = [], 0
+            for kind in self.uav_types:
+                slots.extend(range(offset, offset + (kind.fixed_count if self.fleet_mode == "fixed" else kind.available_count)))
+                offset += kind.available_count
+            if any(d < 0 for d in self.uav_launch_docks) or any(self.uav_launch_docks[j] >= docks_max for j in slots):
+                raise ValueError("A selected launch dock does not exist in the active dock inventory.")
         if self.station_mode == "fixed":
             positions = self.station_positions_wgs84
             if positions is None:

@@ -35,6 +35,7 @@
     ],
     "station_positions_wgs84": null,
     "station_position_types": null,
+    "uav_launch_docks": null,
     "uav_types": [
       {
         "name": "Mavic 3E reference",
@@ -51,7 +52,6 @@
         "gimbal_pitch_min_deg": -90.0,
         "gimbal_pitch_max_deg": 35.0,
         "battery_capacity_Wh": 77.0,
-        "initial_battery_ratio": 1.0,
         "reserve_battery_ratio": 0.15,
         "P_airborne_base_W": 121.6,
         "k_vxy": 0.05,
@@ -69,11 +69,10 @@
     ],
     "station_types": [
       {
-        "name": "100 W dock",
+        "name": "DJI Dock 3 reference",
         "available_count": 2,
         "fixed_count": 2,
-        "charge_power_W": 100.0,
-        "landing_radius_m": 1.5
+        "charge_power_W": 266.49
       }
     ],
     "fleet_mode": "fixed",

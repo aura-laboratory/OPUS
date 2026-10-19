@@ -36,9 +36,15 @@ def test_local_app_simulation_and_invalid_configuration(tmp_path):
         assert client.post('/api/training/stop', json={}, headers={'Origin':'https://example.com'}).status_code == 403
 
 
-def test_training_checkpoint_reload_evaluation_and_export(tmp_path):
+@pytest.mark.parametrize('shared_dock', [False, True])
+def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock):
     with TestClient(create_app(tmp_path)) as client:
-        assert client.post('/api/training/start', json=experiment()).status_code == 200
+        configuration = experiment()
+        if shared_dock:
+            configuration['scenario']['station_types'][0].update(available_count=1, fixed_count=1)
+            configuration['scenario']['station_positions_xy'] = [[20,20]]
+            configuration['scenario']['uav_launch_docks'] = [0,0]
+        assert client.post('/api/training/start', json=configuration).status_code == 200
         for _ in range(300):
             status = client.get('/api/training/status').json()
             if status['status'] in ('completed','failed'):
@@ -71,3 +77,19 @@ def test_invalid_inventory_and_station_types():
     data['scenario']['station_position_types'] = [0, 1]
     with pytest.raises(ValueError):
         ExperimentConfig.model_validate(data)
+
+
+def test_field_validation_and_shared_dock_configuration(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        data = experiment()
+        data['scenario']['required_gsd_m'] = -1
+        result = client.post('/api/configuration/check', json=data).json()
+        assert not result['valid']
+        assert result['errors'][0]['loc'] == ['scenario','required_gsd_m']
+        data = experiment()
+        data['scenario']['station_types'][0].update(available_count=1, fixed_count=1)
+        data['scenario']['station_positions_xy'] = [[20,20]]
+        data['scenario']['uav_launch_docks'] = [0,0]
+        result = client.post('/api/validate', json=data)
+        assert result.status_code == 200
+        assert [u['status'] for u in result.json()['frame']['uavs']] == ['charging','queued']

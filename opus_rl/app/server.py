@@ -13,6 +13,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
@@ -85,6 +86,14 @@ def create_app(runs_root=None):
     def defaults():
         config = ExperimentConfig()
         return {"config": config.model_dump(), "schema": config.model_json_schema()}
+
+    @app.post("/api/configuration/check")
+    def check_configuration(body: dict):
+        try:
+            ExperimentConfig.model_validate(body)
+            return {"valid": True, "errors": []}
+        except ValidationError as error:
+            return {"valid": False, "errors": error.errors(include_url=False, include_context=False, include_input=False)}
 
     @app.post("/api/validate")
     def validate(config: ExperimentConfig):

@@ -13,61 +13,55 @@
 <main>
 <aside>
   <section id="mission-controls">
-    <div class="section-title"><span>01 / Mission</span><h1>Define your operation</h1><p>Draw an area, place the docks, and choose the available fleet.</p></div>
-    <div class="toolbar"><button id="import-config">Import</button><button id="export-config">Export</button><button id="demo-config">Demo</button></div>
-    <input id="config-file" type="file" accept="application/json,.json" hidden>
     <div class="group"><h2>Area of interest</h2>
-      <div id="area-summary" class="muted">160 × 160 m demo area</div>
-      <div class="toolbar"><button id="draw-area">Draw area</button><button id="place-station">Place docks</button></div>
-      <p class="hint">Click to add vertices. Right-click to close. The completed polygon snaps to the coverage grid.</p>
-      <div class="fields"><label>Required GSD · cm/pixel<input id="gsd" type="number" min="0.01" step="0.1"></label>
-        <label>Decision interval · s<input id="delta-t" type="number" min="0.1" step="0.1"></label>
-        <label>Minimum altitude · m<input id="alt-min" type="number" min="1"></label>
-        <label>Maximum altitude · m<input id="alt-max" type="number" min="2"></label>
-        <label>Coverage memory λ<input id="coverage-lambda" type="number" min="0" max="0.99999" step="0.01"></label>
-        <label>Episode decisions<input id="horizon" type="number" min="1"></label></div>
+      <div id="area-summary" class="muted"></div>
+      <div class="toolbar"><button id="draw-area">Draw area</button></div>
+      <small class="field-error" data-error-path="scenario.polygon_wgs84" hidden></small>
+      <div id="mission-fields" class="fields"></div>
     </div>
-    <div class="group"><h2>UAV inventory <button id="add-uav" class="text-button">+ Type</button></h2>
-      <label>Fleet selection<select id="fleet-mode"><option value="fixed">Fixed fleet</option><option value="variable">Sample from inventory</option></select></label>
-      <div id="uav-types"></div><div id="fleet-range" class="fields"></div></div>
-    <div class="group"><h2>Charging stations <button id="add-station" class="text-button">+ Type</button></h2>
-      <label>Station selection<select id="station-mode"><option value="fixed">Fixed locations</option><option value="variable">Sample count and locations</option></select></label>
-      <div id="station-types"></div><div id="station-range" class="fields"></div>
-      <label>Type for new map docks<select id="dock-type"></select></label>
-      <div class="toolbar"><span id="dock-count" class="muted"></span><button id="clear-docks" class="text-button">Clear locations</button></div></div>
-    <details class="group"><summary>Reward weights and grid</summary><div id="reward-fields" class="fields"></div>
-      <div class="fields"><label>Coverage grid<input id="grid-size" type="number" min="16" max="2048"></label><label>Observation grid<input id="obs-size" type="number" min="8" max="256"></label></div></details>
+    <div class="group"><h2>UAVs <button id="add-uav" class="text-button">+ Type</button></h2>
+      <div id="uav-types"></div>
+      <details id="launch-docks"><summary>Launch docks</summary><div id="launch-fields"></div></details>
+    </div>
+    <div class="group"><h2>Charging stations</h2><div id="station-types"></div>
+      <div class="toolbar"><button id="place-station">Place docks</button><button id="clear-docks" class="text-button">Clear</button></div>
+      <small class="field-error" data-error-path="scenario.station_positions_wgs84" hidden></small>
+    </div>
+    <details class="group"><summary>Grid</summary><div id="grid-fields" class="fields"></div></details>
+    <div class="group">
+      <label class="field" for="scenario-mode">Selection
+        <select id="scenario-mode"><option value="fixed">Fixed fleet</option><option value="variable">Sample from inventory</option></select>
+      </label>
+      <div id="sampling-fields" class="fields" hidden></div>
+    </div>
     <button id="validate" class="primary full">Validate mission</button>
   </section>
   <section id="training-controls" hidden>
-    <div class="section-title"><span>02 / Training</span><h1>Train the team</h1><p>One coverage policy shared by the UAVs. Automatic recharge remains active during training.</p></div>
     <div id="training-fields" class="fields"></div>
-    <details class="group"><summary>MAPPO parameters</summary><div id="ppo-fields" class="fields"></div></details>
-    <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop & save</button></div>
+    <details class="group"><summary>MAPPO</summary><div id="ppo-fields" class="fields"></div></details>
+    <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div></details>
+    <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop &amp; save</button></div>
     <div id="training-progress" class="group"><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p></div>
-    <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"><p class="muted">Metrics appear after the first rollout.</p></div></details>
-    <p class="hint">An episode of 1,000 decisions represents 83 min 20 sec of simulated time at 5 s per decision. Training runs as fast as the computer calculates.</p>
+    <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"></div></details>
   </section>
   <section id="runs-controls" hidden>
-    <div class="section-title"><span>03 / Experiments</span><h1>Your saved runs</h1><p>Inspect results, replay a learned policy, or export its configuration and model.</p></div>
-    <button id="refresh-runs">Refresh runs</button><div id="run-list"></div>
-    <p class="hint">Runs are saved on this computer. Evaluation uses repeatable seeds and the saved scenario.</p>
+    <h2>Saved runs</h2><button id="refresh-runs">Refresh</button><div id="run-list"></div>
   </section>
 </aside>
 <div class="workspace">
   <div class="map-toolbar"><form id="search-form"><label class="sr-only" for="place-search">Find a place</label><input id="place-search" placeholder="Find a place…" minlength="2"><button type="submit">Search</button></form>
-    <div id="search-results"></div><span id="map-mode">Demo scenario</span></div>
+    <div id="search-results"></div><span id="map-mode"></span></div>
   <div id="map" role="region" aria-label="Mission map"></div>
-  <div id="map-fallback" hidden><h2>Map unavailable</h2><p>You can still import a scenario, simulate, and train using local coordinates.</p></div>
-  <div class="simulation-bar"><div><span class="eyebrow">LIVE SIMULATION</span><strong id="simulation-time">0 s</strong></div>
+  <div id="map-fallback" hidden>Map unavailable.</div>
+  <div class="simulation-bar"><div><span class="eyebrow">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
     <label class="sr-only" for="simulation-policy">Simulation policy</label><select id="simulation-policy"><option value="heuristic">Sweep baseline</option><option value="random">Random actions</option><option value="model">Loaded model</option></select>
     <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button></div>
   <div class="metrics"><div><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div><span>Lowest 10%</span><strong id="metric-p10">0.000</strong></div><div><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div><span>Step reward</span><strong id="metric-reward">0.000</strong></div></div>
-  <div id="safety-metrics" class="muted">Energy and safety update with each decision.</div>
+  <div id="safety-metrics" class="muted"></div>
   <div id="charts" hidden><div><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage by training step"></canvas></div><div><h2>Reward</h2><canvas id="reward-chart" aria-label="Reward by training step"></canvas></div></div>
   <div id="fleet-status" class="fleet-strip"></div>
 </div>
 </main>
 <div id="notice" role="status" aria-live="polite" hidden></div>
-<footer>OPUS v1 <span>Analytical flight · MAPPO · Local experiments</span><span id="connection-status">Connecting…</span></footer>
+<footer><span>OPUS v1</span><span id="connection-status">Connecting…</span></footer>
 </body></html>
