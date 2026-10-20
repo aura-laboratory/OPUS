@@ -1,5 +1,5 @@
 'use strict';
-let config, defaults, schema, presets, map, polygonLayer, previewLayer, heatLayer, markerGroup;
+let config, defaults, schema, presets, hardware, map, polygonLayer, previewLayer, heatLayer, markerGroup;
 let draft = [], dockPoints = [], mode = 'idle', playing = false, simulationReady = false, currentTab = 'mission';
 let activeJob = false, lastFrame, playGeneration = 0, validationTimer, validationVersion = 0;
 const $ = id => document.getElementById(id);
@@ -7,7 +7,7 @@ const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;'
 const fields = {
   required_gsd_m:['Required GSD','cm/pixel',100], delta_t:['Step time interval ΔT','s'],
   min_altitude_m:['Minimum altitude','m'], max_altitude_m:['Maximum altitude','m'],
-  coverage_lambda:['Coverage memory λ',''], horizon:['Episode steps','steps'],
+  coverage_lambda:['Coverage memory λ',''], horizon:['Episode length','steps'],
   grid_size:['Coverage grid','cells/side'], observation_size:['Observation grid','cells/side'],
   fixed_count:['Number of docks',''],
   max_horizontal_speed_mps:['Horizontal speed','m/s'], max_climb_speed_mps:['Climb speed','m/s'],
@@ -24,13 +24,13 @@ const fields = {
   camera_width_px:['Image width','px'], camera_height_px:['Image height','px'],
   camera_fov_deg:['Field of view','°'], charge_power_W:['Charging power','W'],
   total_steps:['Total team steps','steps'], num_envs:['Parallel environments',''],
-  rollout_steps:['Rollout length','steps'], evaluation_frequency:['Evaluation interval','steps'],
-  evaluation_episodes:['Evaluation episodes',''], evaluation_horizon:['Evaluation length','steps'],
+  rollout_steps:['Rollout length','steps/env'], evaluation_frequency:['Evaluation interval','steps'],
+  evaluation_episodes:['Evaluation episodes',''],
   checkpoint_frequency:['Checkpoint interval','steps'], seed:['Seed',''], torch_threads:['CPU threads',''],
   learning_rate:['Learning rate',''], gamma:['Discount γ',''], gae_lambda:['GAE λ',''],
   clip_range:['PPO clip',''], entropy_coef:['Entropy coefficient',''], value_coef:['Value coefficient',''],
-  max_grad_norm:['Gradient limit',''], batch_size:['Batch size',''], epochs:['Update epochs',''],
-  hidden_size:['Network width',''], target_kl:['Target KL',''],
+  max_grad_norm:['Gradient limit',''], batch_size:['Minibatch size','team steps'], epochs:['Update epochs',''],
+  hidden_size:['Network width','units'], target_kl:['Target KL',''],
   min_uavs:['Minimum UAVs',''], max_uavs:['Maximum UAVs',''],
   min_stations:['Minimum docks',''], max_stations:['Maximum docks',''],
   mean_weight:['Mean quality',''], fairness_weight:['Fairness',''], p10_weight:['Lowest 10%',''],
@@ -92,6 +92,7 @@ async function checkFields() {
   return result.valid;
 }
 function changed() {
+  updateRewardEquation();
   simulationReady=false; clearTimeout(validationTimer);
   validationTimer=setTimeout(()=>checkFields().catch(()=>{}),300);
 }
@@ -101,7 +102,8 @@ function action(id,fn) {
   });
 }
 function numericField(object,key,path,properties,onChange) {
-  const [title,unit,scale=1]=fields[key]||[key,''];
+  const [title,baseUnit,scale=1]=fields[key]||[key,''];
+  const unit=key==='torch_threads'&&hardware?'/'+hardware.cpu_threads:baseUnit;
   const definition=properties?.[key]||{}, integer=definition.type==='integer';
   const label=document.createElement('label'); label.className='field'; label.htmlFor=path;
   const text=document.createElement('span'); text.textContent=title; label.append(text);
@@ -110,12 +112,13 @@ function numericField(object,key,path,properties,onChange) {
   input.value=object[key]===null?'':object[key]*scale; input.step=integer?'1':'any';
   if(definition.minimum!==undefined) input.min=definition.minimum*scale;
   if(definition.maximum!==undefined) input.max=definition.maximum*scale;
+  if(key==='torch_threads'&&hardware)input.max=Math.min(hardware.cpu_threads,definition.maximum||Infinity);
   input.oninput=()=>{const previous=object[key];object[key]=input.value===''?null:Number(input.value)/scale;onChange?.(previous);changed();};
   box.append(input);
   if(unit) {const suffix=document.createElement('span');suffix.className='unit';suffix.textContent=unit;box.append(suffix);}
   label.append(box);
   const error=document.createElement('small');error.className='field-error';error.dataset.errorPath=path;error.id=path+'-error';error.hidden=true;
-  input.setAttribute('aria-describedby',error.id);label.append(error);return label;
+  input.setAttribute('aria-describedby',error.id);label.append(error);return attachFieldHelp(label,key);
 }
 function numericFields(container,object,keys,path,properties,onChange) {
   const holder=typeof container==='string'?$(container):container;holder.replaceChildren();
@@ -162,14 +165,14 @@ function presetField(item,options,title,onSelect) {
     const selected=options.find(p=>p.id===select.value);
     if(selected)onSelect(selected);else{item.preset_id=null;changed();}
   };
-  label.append(select);return label;
+  label.append(select);return attachFieldHelp(label,'preset');
 }
 function nameField(item,index) {
   const path='scenario.uav_types.'+index+'.name',label=document.createElement('label');label.className='field';label.textContent='Name';
   const input=document.createElement('input');input.value=item.name;input.id=path;input.setAttribute('aria-label','Name for UAV '+(index+1));
   input.oninput=()=>{item.name=input.value;changed();};
   const error=document.createElement('small');error.className='field-error';error.dataset.errorPath=path;error.hidden=true;
-  label.append(input,error);return label;
+  label.append(input,error);return attachFieldHelp(label,'name');
 }
 function renderUAVs() {
   const holder=$('uav-types');holder.replaceChildren();
@@ -200,7 +203,7 @@ function renderUAVs() {
     const select=document.createElement('select');select.setAttribute('aria-label','FOV axis for UAV '+(index+1));
     for(const value of ['diagonal','horizontal'])select.add(new Option(value,value));
     select.value=item.camera_fov_axis;select.onchange=()=>{item.camera_fov_axis=select.value;changed();};
-    axis.append(select);camera.append(axis);propertiesGroup.append(camera);
+    axis.append(select);attachFieldHelp(axis,'camera_fov_axis');camera.append(axis);propertiesGroup.append(camera);
     card.append(header,identity,propertiesGroup);holder.append(card);
   });
   $('add-uav').disabled=config.scenario.uav_types.length>=128;renderLaunchFields();
@@ -218,7 +221,7 @@ function renderLaunchFields() {
     select.value=String(config.scenario.uav_launch_docks?.[index]??index%Math.max(1,count));
     select.onchange=()=>{config.scenario.uav_launch_docks[index]=Number(select.value);changed();};
     const error=document.createElement('small');error.className='field-error';error.dataset.errorPath='scenario.uav_launch_docks.'+index;error.hidden=true;
-    label.append(select,error);holder.append(label);
+    label.append(select,error);holder.append(attachFieldHelp(label,'launch_dock'));
   });
 }
 function renderStation() {
@@ -241,12 +244,27 @@ function renderStation() {
 function renderForms() {
   const s=config.scenario,properties=schema.$defs.ScenarioConfig.properties;
   numericFields('mission-fields',s,['required_gsd_m','min_altitude_m','max_altitude_m','coverage_lambda','grid_size','observation_size'],'scenario',properties);
-  numericFields('episode-fields',s,['delta_t','horizon'],'scenario',properties);
   renderUAVs();renderStation();
-  const main=['total_steps','num_envs','rollout_steps','evaluation_frequency','evaluation_episodes','evaluation_horizon','checkpoint_frequency','seed'];
-  numericFields('training-fields',config.training,main,'training',schema.$defs.TrainConfig.properties);
-  numericFields('ppo-fields',config.training,Object.keys(config.training).filter(k=>!main.includes(k)&&k!=='device'),'training',schema.$defs.TrainConfig.properties);
+  const main=['total_steps','num_envs','rollout_steps','evaluation_frequency','evaluation_episodes','checkpoint_frequency','seed','torch_threads'];
+  numericFields('training-fields',s,['delta_t','horizon'],'scenario',properties);
+  for(const key of main)$('training-fields').append(numericField(config.training,key,'training.'+key,schema.$defs.TrainConfig.properties));
+  const device=document.createElement('label');device.className='field full-field';device.textContent='Compute device';
+  const select=document.createElement('select');select.id='training.device';
+  select.add(new Option('Auto','auto'));select.add(new Option('CPU','cpu'));
+  const gpu=new Option(hardware?.cuda_available?'GPU':'GPU (unavailable)','cuda');gpu.disabled=!hardware?.cuda_available;select.add(gpu);
+  select.value=config.training.device;select.onchange=()=>{config.training.device=select.value;changed();};device.append(select);
+  const deviceError=document.createElement('small');deviceError.className='field-error';deviceError.dataset.errorPath='training.device';deviceError.id='training.device-error';deviceError.hidden=true;device.append(deviceError);
+  select.setAttribute('aria-describedby',deviceError.id);
+  const detected=hardware?.gpu_names?.length?'Detected GPU: '+hardware.gpu_names.join(', ')+'.':'';
+  $('training-fields').append(attachFieldHelp(device,'device',detected));
+  numericFields('ppo-fields',config.training,Object.keys(config.training).filter(k=>!main.includes(k)&&!['device','evaluation_horizon'].includes(k)),'training',schema.$defs.TrainConfig.properties);
   numericFields('reward-fields',s.reward,Object.keys(s.reward),'scenario.reward',schema.$defs.RewardConfig.properties);
+  updateRewardEquation();
+}
+function updateRewardEquation() {
+  document.querySelectorAll('[data-reward-weight]').forEach(node=>{
+    const value=config?.scenario.reward[node.dataset.rewardWeight];node.textContent=Number.isFinite(value)?String(value):'?';
+  });
 }
 function setTab(tab) {
   currentTab=tab;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('selected',b.dataset.tab===tab));
@@ -291,15 +309,19 @@ function pause(){playing=false;playGeneration++;$('play-simulation').textContent
 async function reset(stopPlay=true){if(!await checkFields())throw Error('Correct the highlighted fields.');if(stopPlay)pause();setMode('idle');const frame=await api('/api/simulation/reset',config);simulationReady=true;applyFrame(frame,true);}
 async function step(){if(!simulationReady)await reset(false);const frame=await api('/api/simulation/step',{policy:$('simulation-policy').value});applyFrame(frame);}
 async function play(){if(playing){pause();return;}playing=true;const generation=++playGeneration;$('play-simulation').textContent='Pause';while(playing&&generation===playGeneration){try{await step();}catch(e){notice(e.message,true);pause();}if(playing&&generation===playGeneration)await new Promise(r=>setTimeout(r,120));}}
-function diagnostics(metrics){if(!metrics)return;const fields=[['Policy loss','actor_loss'],['Critic loss','value_loss'],['Gaussian entropy','entropy'],['Approximate KL','approximate_kl'],['Explained variance','explained_variance'],['Coverage actor fraction','actor_sample_fraction'],['Energy · Wh/decision','energy_Wh_per_step'],['Projection fraction','reward_projection'],['Collision fraction','reward_collision'],['Crashed fraction','reward_crash']];$('training-diagnostics').innerHTML='<dl>'+fields.map(([label,key])=>`<div><dt>${label}</dt><dd>${Number(metrics[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';}
+function diagnostics(metrics) {
+  if(!metrics){$('training-diagnostics').innerHTML='<p class="muted">Available after the first rollout.</p>';return;}
+  const entries=[['Policy loss','actor_loss'],['Critic loss','value_loss'],['Gaussian entropy','entropy'],['Approximate KL','approximate_kl'],['Explained variance','explained_variance'],['Coverage actor fraction','actor_sample_fraction'],['Energy · Wh/decision','energy_Wh_per_step'],['Projection fraction','reward_projection'],['Collision fraction','reward_collision'],['Crashed fraction','reward_crash']];
+  $('training-diagnostics').innerHTML='<dl>'+entries.map(([label,key])=>`<div data-help="${escapeHTML(fieldHelp[key]||'')}"><dt>${label}</dt><dd>${Number(metrics[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';
+}
 function chart(id,history,key,color){const canvas=$(id),ratio=window.devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=170*ratio;const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);const w=canvas.clientWidth,h=170;ctx.clearRect(0,0,w,h);if(!history.length)return;const values=history.map(x=>x[key]),min=Math.min(0,...values),max=Math.max(.01,...values);ctx.strokeStyle='#344c5e';ctx.fillStyle='#9ab0c0';ctx.font='11px Segoe UI';for(let i=0;i<3;i++){const y=15+i*58;ctx.beginPath();ctx.moveTo(45,y);ctx.lineTo(w-8,y);ctx.stroke();ctx.fillText((max-(max-min)*i/2).toFixed(2),3,y+3);}ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();history.forEach((point,index)=>{const x=45+(w-58)*index/Math.max(1,history.length-1),y=15+116*(1-(point[key]-min)/(max-min||1));index?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();ctx.fillText('0',45,160);ctx.fillText(history.at(-1).steps.toLocaleString()+' steps',Math.max(45,w-100),160);}
 async function poll(){try{const job=await api('/api/training/status');activeJob=['starting','running','stopping'].includes(job.status);$('job-badge').textContent=job.status==='idle'?'Ready':job.status[0].toUpperCase()+job.status.slice(1);$('connection-status').textContent='Local backend connected';$('start-training').disabled=activeJob;$('stop-training').disabled=!activeJob;if(job.total_steps){$('progress-fill').style.width=Math.min(100,100*job.steps/job.total_steps)+'%';$('progress-text').textContent=`${(job.steps||0).toLocaleString()} / ${job.total_steps.toLocaleString()} steps${job.metrics?' · '+job.metrics.steps_per_second.toFixed(1)+' steps/s':''}`;}if(job.frame&&currentTab==='training')applyFrame(job.frame);diagnostics(job.metrics);chart('coverage-chart',job.history||[],'mean_coverage','#e9b36c');chart('reward-chart',job.history||[],'mean_step_reward','#8cb9cd');if(job.status==='failed'&&job.error!==poll.lastError){notice(job.error,true);poll.lastError=job.error;}}catch(e){$('connection-status').textContent='Backend disconnected';}setTimeout(poll,1000);}
-async function loadRuns(){const runs=await api('/api/runs');$('run-list').innerHTML='';if(!runs.length){$('run-list').innerHTML='<p class="muted">No runs yet. Start an experiment in Training.</p>';return;}for(const run of runs){const item=document.createElement('div');item.className='run-block';const evaluation=run.evaluation;item.innerHTML=`<h3>${escapeHTML(run.run_id)}</h3><p>${escapeHTML(run.algorithm||'mappo').toUpperCase()} · ${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No scheduled evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a></div>`;item.querySelector('.replay').onclick=async()=>{try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint:item.querySelector('select').value});pause();setMode('idle');config=result.config;normalizeMission(config.scenario,result.frame);dockPoints=result.frame.stations.map(s=>({type:s.type_index,geographic:s.geographic}));renderForms();simulationReady=true;applyFrame(result.frame,true);$('simulation-policy').value='model';setTab('mission');notice('Saved policy loaded. Use Step or Play to replay.');}catch(e){notice(e.message,true);}};item.querySelector('.evaluate').onclick=async(event)=>{event.target.disabled=true;try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/evaluate`,{checkpoint:item.querySelector('select').value,episodes:config.training.evaluation_episodes});applyFrame(result.frame,true);notice(`Evaluation: return ${result.return_mean.toFixed(2)} · mean quality ${result.coverage_mean.toFixed(3)} · crashes ${result.crashed_uavs.toFixed(1)}`);}catch(e){notice(e.message,true);}finally{event.target.disabled=false;}};$('run-list').append(item);}}
+async function loadRuns(){const runs=await api('/api/runs');$('run-list').innerHTML='';if(!runs.length){$('run-list').innerHTML='<p class="muted">No runs yet. Start an experiment in Training.</p>';return;}for(const run of runs){const item=document.createElement('div');item.className='run-block';const evaluation=run.evaluation;item.innerHTML=`<h3>${escapeHTML(run.run_id)}</h3><p>${escapeHTML(run.algorithm||'mappo').toUpperCase()} · ${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No scheduled evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a></div>`;item.querySelector('.replay').onclick=async()=>{try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint:item.querySelector('select').value});pause();setMode('idle');config=result.config;normalizeMission(config.scenario,result.frame);dockPoints=result.frame.stations.map(s=>({type:s.type_index,geographic:s.geographic}));renderForms();simulationReady=true;applyFrame(result.frame,true);$('simulation-policy').value='model';setTab('mission');notice('Saved policy loaded. Use Step or Play to replay.');}catch(e){notice(e.message,true);}};item.querySelector('.evaluate').onclick=async(event)=>{event.target.disabled=true;try{const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/evaluate`,{checkpoint:item.querySelector('select').value,episodes:config.training.evaluation_episodes});applyFrame(result.frame,true);notice(`Evaluation: return ${result.return_mean.toFixed(2)} · mean quality ${result.coverage_mean.toFixed(3)} · crashes ${result.crashed_uavs.toFixed(1)}`);}catch(e){notice(e.message,true);}finally{event.target.disabled=false;}};attachFieldHelp(item.querySelector('select'),'checkpoint');$('run-list').append(item);}}
 
 async function initialize() {
   try {
     const [response,area]=await Promise.all([api('/api/defaults'),api('/static/default-area.json')]);
-    defaults=response.config;schema=response.schema;presets=response.presets;config=structuredClone(defaults);
+    defaults=response.config;schema=response.schema;presets=response.presets;hardware=response.hardware||null;config=structuredClone(defaults);
     Object.assign(config.scenario,area);normalizeMission(config.scenario);renderForms();
     if(window.L) {
       map=L.map('map',{doubleClickZoom:false}).setView([...config.scenario.map_origin_wgs84].reverse(),18);
@@ -336,7 +358,8 @@ async function initialize() {
       config.scenario.uav_launch_docks.push(0);renderUAVs();changed();
     });
     action('start-training',async()=>{
-      if((await api('/api/health')).training_algorithm!=='ippo')throw Error('Restart OPUS to load IPPO training.');
+      const health=await api('/api/health');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==2)throw Error('Restart OPUS to load the updated training controls.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});
@@ -354,4 +377,6 @@ async function initialize() {
     poll();
   } catch(error){notice(error.message,true);$('connection-status').textContent='Unable to initialize';}
 }
+initializeFieldHelp();
+attachFieldHelp($('place-search'),'place_search');attachFieldHelp($('simulation-policy'),'simulation_policy');
 initialize();

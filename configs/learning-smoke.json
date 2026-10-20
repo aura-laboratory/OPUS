@@ -110,7 +110,6 @@
     "epochs": 4,
     "evaluation_frequency": 1024,
     "evaluation_episodes": 3,
-    "evaluation_horizon": 64,
     "checkpoint_frequency": 4096,
     "seed": 7,
     "torch_threads": 2,

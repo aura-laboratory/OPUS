@@ -19,6 +19,7 @@ from opus_rl.marl.network import (
 )
 from opus_rl.marl.ppo import generalized_advantage, update
 from .evaluate import evaluate
+from .hardware import hardware_info, select_device
 
 
 def save_json(path, value):
@@ -54,6 +55,9 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     config = config.model_copy(deep=True)
     config.scenario.reward_mode = "individual"  # New runs always use IPPO, including from legacy run configs.
     cfg = config.training
+    hardware = hardware_info()
+    cfg.torch_threads = min(cfg.torch_threads, hardware["cpu_threads"])
+    device, device_reason = select_device(config)
     stop_event = stop_event or threading.Event()
     run_id = output_name or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
     if Path(run_id).name != run_id:
@@ -67,9 +71,6 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                "map": "occupancy fraction, mean and p10 quality", "actions": "tanh Gaussian in [-1,1]",
                "map_buffer_dtype": "float16, encoded once per environment per transition"})
     torch.set_num_threads(cfg.torch_threads)
-    if cfg.device == "cuda" and not torch.cuda.is_available():
-        raise ValueError("CUDA is unavailable in this environment; use CPU or auto.")
-    device = "cuda" if cfg.device in ("cuda", "auto") and torch.cuda.is_available() else "cpu"
     rng = np.random.default_rng(cfg.seed)
     envs = [OpusTeamEnv(config.scenario) for _ in range(cfg.num_envs)]
     observations = [env.reset(seed=cfg.seed + i)[0] for i, env in enumerate(envs)]
@@ -88,6 +89,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                "agent_steps": 0,
                "algorithm": "ippo", "reward_mode": "individual",
                "git_commit": git_version(), "seed": cfg.seed, "device": device,
+               "device_reason": device_reason, "hardware": hardware,
                "started_utc": datetime.now(timezone.utc).isoformat(), "evaluation": None}
     save_json(directory / "summary.json", summary)
 
@@ -195,8 +197,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 summary.update(steps=steps, agent_steps=agent_steps, metrics=stats)
                 evaluation = None
                 if steps >= next_evaluation and not stop_event.is_set():
-                    evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes, cfg.evaluation_horizon,
-                                          cfg.seed + 10000, device=device, stop_event=stop_event, include_frame=True)
+                    evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes,
+                                          seed=cfg.seed + 10000, device=device, stop_event=stop_event, include_frame=True)
                     if evaluation.get("episodes", 0):
                         clean = {key: value for key, value in evaluation.items() if key != "frame"}
                         summary["evaluation"] = clean

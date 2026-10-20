@@ -52,3 +52,10 @@ aside>section>details.group>.fields{margin-top:10px;gap:8px}
 button[aria-pressed]{box-shadow:0 2px 2px #080f1666,inset 0 1px 0 #ffffff12;transition:background .15s,box-shadow .15s,transform .1s}
 button[aria-pressed="true"],button[aria-pressed="true"]:hover{background:linear-gradient(#4d8c5d,#386e48);border-color:#8bc49a;color:#f3fff5;box-shadow:inset 0 3px 6px #102c2077,inset 0 -1px 0 #ffffff15;transform:translateY(1px)}
 button[aria-pressed]:active{box-shadow:inset 0 3px 6px #08120d88;transform:translateY(1px)}
+.field[data-help]>span:first-child{cursor:help}
+#field-help{position:fixed;z-index:2500;max-width:min(310px,calc(100vw - 24px));padding:11px 13px;background:#203341;color:#e4edf3;border:1px solid #668094;border-radius:6px;box-shadow:0 5px 18px #0006;font-size:12px;line-height:1.5;pointer-events:none}
+.reward-equation{border-top:1px solid #304857;margin-top:12px;padding-top:10px;overflow-x:auto}
+.reward-equation math{font-size:15px;margin:8px 0;color:#eed2a9}
+.reward-equation p{font-size:10px;line-height:1.6;margin:10px 0 0}
+#training-diagnostics>p{margin:10px 0 0}
+.full-field{grid-column:1/-1}

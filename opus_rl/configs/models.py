@@ -189,13 +189,20 @@ class TrainConfig(Config):
     epochs: int = Field(4, ge=1, le=100)
     evaluation_frequency: int = Field(2048, ge=1)
     evaluation_episodes: int = Field(2, ge=1, le=100)
-    evaluation_horizon: int = Field(1000, ge=1)
     checkpoint_frequency: int = Field(2048, ge=1)
     seed: int = Field(42, ge=0, le=2147483647)
     torch_threads: int = Field(2, ge=1, le=64)
-    device: Literal["cpu", "cuda", "auto"] = "cpu"
+    device: Literal["cpu", "cuda", "auto"] = "auto"
     hidden_size: int = Field(128, ge=32, le=512)
     target_kl: float = Field(0.03, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_legacy_evaluation_length(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("evaluation_horizon", None)
+        return data
 
 
 class ExperimentConfig(Config):

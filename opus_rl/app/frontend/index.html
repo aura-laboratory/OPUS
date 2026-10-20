@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>OPUS · Persistent UAV coverage</title>
   <link rel="stylesheet" href="/static/vendor/leaflet.css"><link rel="stylesheet" href="/static/style.css">
-  <script defer src="/static/vendor/leaflet.js"></script><script defer src="/static/app.js"></script>
+  <script defer src="/static/vendor/leaflet.js"></script><script defer src="/static/field-help.js"></script><script defer src="/static/app.js"></script>
 </head>
 <body>
 <header><div class="brand">OPUS <span>Persistent UAV coverage</span></div>
@@ -29,14 +29,28 @@
     <button id="validate" class="primary full">Validate mission</button>
   </section>
   <section id="training-controls" hidden>
-    <div class="group"><h2>Episode</h2><div id="episode-fields" class="fields"></div></div>
     <div class="group"><h2>Training</h2><div id="training-fields" class="fields"></div></div>
     <details class="group"><summary>IPPO</summary><div id="ppo-fields" class="fields"></div></details>
-    <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div></details>
+    <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div>
+      <div class="reward-equation" data-help="C′ is the next coverage map. C′₋ᵢ keeps the same history and other UAV captures, omitting only UAV i’s current capture. The coefficients below follow the fields above; negative contributions are retained.">
+        <math display="block" aria-label="Coverage score"><mrow>
+          <mi>F</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>=</mo>
+          <mn data-reward-weight="mean_weight">0.5</mn><mi>μ</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>+</mo>
+          <mn data-reward-weight="fairness_weight">0.4</mn><mi>J</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>+</mo>
+          <mn data-reward-weight="p10_weight">0.1</mn><msub><mi>P</mi><mn>10</mn></msub><mo>(</mo><mi>C</mi><mo>)</mo>
+        </mrow></math>
+        <math display="block" aria-label="Individual UAV reward"><mtable columnalign="right left" columnspacing="0.25em" rowspacing="0.3em">
+          <mtr><mtd><msub><mi>r</mi><mi>i</mi></msub><mo>=</mo></mtd><mtd><mi>F</mi><mo>(</mo><msup><mi>C</mi><mo>′</mo></msup><mo>)</mo><mo>−</mo><mi>F</mi><mo>(</mo><msubsup><mi>C</mi><mrow><mo>−</mo><mi>i</mi></mrow><mo>′</mo></msubsup><mo>)</mo></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="energy_weight">0.2</mn><msub><mi>e</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="projection_weight">0.1</mn><msub><mi>p</mi><mi>i</mi></msub></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="collision_weight">0.3</mn><msub><mi>c</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="crash_weight">0.4</mn><msub><mi>x</mi><mi>i</mi></msub></mtd></mtr>
+        </mtable></math>
+        <p class="muted">μ: mean · J: fairness · P₁₀: lowest 10%<br>e: energy · p: correction · c: collision · x: crash</p>
+      </div>
+    </details>
     <div id="training-progress" class="group"><h2>Progress</h2><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p>
       <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop &amp; save</button></div>
     </div>
-    <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"></div></details>
+    <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"><p class="muted">Available after the first rollout.</p></div></details>
   </section>
   <section id="runs-controls" hidden>
     <div class="group"><h2>Saved runs <button id="refresh-runs" class="text-button">Refresh</button></h2><div id="run-list"></div></div>

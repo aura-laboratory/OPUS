@@ -20,7 +20,7 @@ def experiment():
     return ExperimentConfig(scenario=small_config(horizon=16),
                             training=TrainConfig(total_steps=32, num_envs=1, rollout_steps=8,
                               epochs=1, hidden_size=32, batch_size=8,
-                              evaluation_frequency=16, evaluation_episodes=1, evaluation_horizon=12,
+                              evaluation_frequency=16, evaluation_episodes=1,
                               checkpoint_frequency=16, torch_threads=1)).model_dump()
 
 
@@ -92,6 +92,7 @@ def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock,
         evaluation = client.post(f"/api/runs/{run['run_id']}/evaluate", json={'episodes':1, 'scenario':alternate})
         assert evaluation.status_code == 200
         assert evaluation.json()['episodes'] == 1
+        assert evaluation.json()['frame']['info']['step'] == configuration['scenario']['horizon']
         assert evaluation.json()['reward_mode'] == 'individual'
         individual_returns = evaluation.json()['uav_returns'][0]['uavs']
         assert len(individual_returns) == 2
@@ -140,9 +141,10 @@ def test_interface_refresh_uses_current_assets_without_caching(tmp_path, monkeyp
     frontend = tmp_path / 'frontend'
     frontend.mkdir()
     (frontend / 'index.html').write_text(
-        '<link href="/static/style.css"><script src="/static/app.js"></script>', encoding='utf8')
+        '<link href="/static/style.css"><script src="/static/field-help.js"></script><script src="/static/app.js"></script>', encoding='utf8')
     (frontend / 'style.css').write_text('body {color: white}', encoding='utf8')
     (frontend / 'app.js').write_text('const revision = 1;', encoding='utf8')
+    (frontend / 'field-help.js').write_text('const fieldHelp = {};', encoding='utf8')
     monkeypatch.setattr(server, 'FRONTEND', frontend)
     with TestClient(create_app(tmp_path / 'runs')) as client:
         first = client.get('/')
@@ -150,6 +152,7 @@ def test_interface_refresh_uses_current_assets_without_caching(tmp_path, monkeyp
         assert first.headers['cache-control'] == 'no-store'
         assert f'/static/app.js?v={revision}' in first.text
         assert f'/static/style.css?v={revision}' in first.text
+        assert f'/static/field-help.js?v={revision}' in first.text
         asset = client.get(f'/static/app.js?v={revision}')
         assert asset.headers['cache-control'] == 'no-store'
         assert asset.text == 'const revision = 1;'
@@ -159,6 +162,8 @@ def test_interface_refresh_uses_current_assets_without_caching(tmp_path, monkeyp
         assert next_revision != revision
         assert f'/static/app.js?v={next_revision}' in second.text
         assert client.get(f'/static/app.js?v={next_revision}').text == 'const revision = 2;'
+        (frontend / 'field-help.js').write_text('const fieldHelp = {test: "New help"};', encoding='utf8')
+        assert client.get('/api/health').json()['frontend_revision'] != next_revision
 
 
 def test_individual_uav_presets_persist_through_simulation_and_checkpoint(tmp_path):

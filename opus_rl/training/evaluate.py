@@ -19,7 +19,7 @@ def heuristic_action(env):
     return actions
 
 
-def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy="model", device="cpu",
+def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
              stop_event=None, include_frame=False):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
@@ -31,7 +31,7 @@ def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy=
         total = energy_used = collision_count = 0
         individual_returns = np.zeros(env.n_max)
         averages = []
-        for _ in range(min(horizon or scenario.horizon, scenario.horizon)):
+        for _ in range(scenario.horizon):
             if stop_event and stop_event.is_set():
                 break
             if policy == "random":

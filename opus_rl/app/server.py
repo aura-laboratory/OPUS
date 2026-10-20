@@ -22,6 +22,7 @@ from opus_rl.configs import ExperimentConfig, ScenarioConfig
 from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
 from opus_rl.training.evaluate import evaluate, heuristic_action
+from opus_rl.training.hardware import hardware_info, select_device
 from opus_rl.training.train import load_checkpoint, save_json, train
 
 
@@ -86,17 +87,29 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
+                "training_controls_revision": 2,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
     def defaults():
         config = default_experiment()
-        return {"config": config.model_dump(), "schema": config.model_json_schema(), "presets": reference_presets()}
+        hardware = hardware_info()
+        config.training.torch_threads = min(config.training.torch_threads, hardware["cpu_threads"])
+        return {"config": config.model_dump(), "schema": config.model_json_schema(),
+                "presets": reference_presets(), "hardware": hardware}
 
     @app.post("/api/configuration/check")
     def check_configuration(body: dict):
         try:
-            ExperimentConfig.model_validate(body)
+            config = ExperimentConfig.model_validate(body)
+            if config.training.torch_threads > hardware_info()["cpu_threads"]:
+                return {"valid": False, "errors": [{"loc": ["training", "torch_threads"],
+                    "msg": f"Choose at most {hardware_info()['cpu_threads']} available CPU threads."}]}
+            if config.training.device == "cuda":
+                try:
+                    select_device(config)
+                except ValueError as error:
+                    return {"valid": False, "errors": [{"loc": ["training", "device"], "msg": str(error)}]}
             return {"valid": True, "errors": []}
         except ValidationError as error:
             return {"valid": False, "errors": error.errors(include_url=False, include_context=False, include_input=False)}
@@ -148,6 +161,7 @@ def create_app(runs_root=None):
                 raise HTTPException(409, "An experiment is already running.")
             # Validate all geometry and inventory before creating a background job.
             config.scenario.reward_mode = "individual"
+            select_device(config)
             env = OpusTeamEnv(config.scenario)
             env.reset(seed=config.training.seed)
             approximate_bytes = config.training.rollout_steps * config.training.num_envs * (
@@ -275,7 +289,7 @@ def create_app(runs_root=None):
     def index():
         revision = frontend_revision(FRONTEND)
         html = (FRONTEND / "index.html").read_text(encoding="utf8")
-        for name in ("app.js", "style.css"):
+        for name in ("app.js", "style.css", "field-help.js"):
             html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={revision}"')
         return HTMLResponse(html)
 

@@ -4,7 +4,7 @@ Validated locally on 2026-10-09, using Python 3.11.17 and CPU PyTorch 2.14.1, on
 
 ## Automated checks
 
-**39 tests pass** as of 2026-10-20. Ruff and JavaScript syntax checks pass. The suite covers:
+**48 tests pass** as of 2026-10-20. Ruff and JavaScript syntax checks pass. The suite covers:
 
 - Gymnasium signatures, spaces, deterministic resets, observation ownership and vector environments.
 - Fixed/variable typed inventory, padding and count limits.
@@ -83,6 +83,12 @@ New runs use individual capture-difference rewards, local per-UAV values and sep
 Bounded API tests complete 32 team steps with separate and shared launch docks, then reload, evaluate and export the IPPO model and individual reward CSV. The privileged-state accessor is disabled during these tests. A two-environment sampled-fleet test crosses episode resets with different active fleet sizes, verifies agent counts and recorded reward averages, and replaces the Gymnasium scalar reward with an unrelated large value to ensure it cannot enter learner targets.
 
 The original saved MAPPO best model still evaluates to return **40.82751992640401** and mean coverage **0.6439687173697166** in legacy team-reward mode. New checkpoints identify IPPO and individual reward semantics explicitly. There has been no new long learning study; historical team-return values cannot be compared directly to the new individual returns. No application server was launched or restarted for this revision.
+
+## Training controls and hardware: 2026-10-20
+
+All 48 tests pass after merging episode fields into Training, removing the independent evaluation cap, and adding hardware discovery. API evaluation reaches the configured episode horizon; legacy configurations containing `evaluation_horizon` remain readable. Hardware checks verify cached discovery, a CPU count displayed separately from GPU support, Auto fallback without a compatible backend or sufficient memory, and inline errors for excess CPU threads. GPU selection paths are tested with mocked availability and memory; actual GPU training is untested. The current machine reports 12 logical CPU threads and a Radeon RX 580 with a CPU-only PyTorch build.
+
+Both frontend scripts pass syntax checks. A standalone UI preview was prepared without starting an OPUS server, but browser policy blocked local-file navigation. The new tooltip delay and MathML layout have not been visually verified in the browser.
 
 ## Remaining research limits
 
