@@ -15,7 +15,7 @@
   <section id="mission-controls">
     <div class="group"><h2>Area of interest</h2>
       <div id="area-summary" class="muted"></div>
-      <div class="toolbar"><button id="draw-area">Draw area</button></div>
+      <div class="toolbar"><button id="draw-area" type="button" aria-pressed="false">Draw area</button></div>
       <small class="field-error" data-error-path="scenario.polygon_wgs84" hidden></small>
       <div id="mission-fields" class="fields"></div>
     </div>
@@ -23,7 +23,7 @@
       <div id="uav-types"></div>
     </div>
     <div class="group"><h2>Charging stations</h2><div id="station-types"></div>
-      <div class="toolbar"><button id="place-station">Place docks</button><button id="clear-docks" class="text-button">Clear</button></div>
+      <div class="toolbar"><button id="place-station" type="button" aria-pressed="false">Place docks</button><button id="clear-docks" class="text-button">Clear</button></div>
       <small class="field-error" data-error-path="scenario.station_positions_wgs84" hidden></small>
     </div>
     <button id="validate" class="primary full">Validate mission</button>

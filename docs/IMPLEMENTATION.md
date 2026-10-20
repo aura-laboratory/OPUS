@@ -50,6 +50,8 @@ All feature normalization is fixed and explicit; no running observation statisti
 
 ## Local application
 
+The browser and generated default configuration use the same bundled `default-area.json` starter footprint over the waterfront part of Aristotelous Square. Its approximate boundary follows the plaza footpaths mapped in [OpenStreetMap](https://www.openstreetmap.org/way/1232262919). Both docks are inside the footprint. The underlying `ScenarioConfig` metric defaults remain available for analytical tests; saved run configurations are unchanged.
+
 FastAPI binds to 127.0.0.1. The application runs locally; source code is hosted in the aura-laboratory/OPUS GitHub repository, while checkpoints and experiments remain local. Basemap tiles come from OpenStreetMap, and submitted place searches use cached, rate-limited Nominatim requests (at most one per 1.05 s). No automatic search-as-you-type or bulk tile download is performed. Public service availability is not required for local-coordinate simulation/training.
 
 The map overlay is for visualization; metric geometry and camera calculations use pyproj's local azimuthal-equidistant frame. Vertices snap to grid vertices. The raster combines center-based point-in-polygon membership with a supercover boundary, retaining every cell touched by an edge or vertex. Thus the raster boundary approximates the polygon to within a cell; camera projection evaluates those cells at their centers. Date-line-crossing areas and geographic latitudes beyond ±85° require preprocessing. API validation caps the area extent and inventory, and rejects excessive rollout buffer settings.

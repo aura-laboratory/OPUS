@@ -68,6 +68,12 @@ The individual-UAV editor was checked with three separate Mavic 3E cards, per-ai
 
 The shared section frames, nested cards, heading gaps, and input spacing were visually checked across Mission, Training and Runs. Training dropdowns, chart frames, progress controls and saved-run checkpoint/action rows use the same hierarchy.
 
+## Starter area and map tools: 2026-10-20
+
+The starter footprint was checked against the waterfront part of Aristotelous Square. The API verifies that it contains the square's center and both launch docks. All 27 non-training tests pass; the three training tests were excluded from this check. Ruff and JavaScript syntax checks pass.
+
+Browser checks on the existing local server verified green, inset pressed states for Draw area and Place docks, toggling either mode off, switching between tools, restoring the original polygon after cancelling an unfinished drawing, and entering dock placement after closing a polygon. No server or training job was launched. Reward and MAPPO code are unchanged.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

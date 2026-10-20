@@ -38,6 +38,8 @@ The isolated environment is named **OPUS**. Activate it with `conda activate OPU
 
 ## Workflow
 
+The starter mission covers the waterfront part of Aristotelous Square in Thessaloniki, with two docks inside the area. **Draw area** and **Place docks** turn green and appear pressed while active; click again to leave that mode.
+
 1. Search the map for a place. Choose **Draw area**, left-click vertices, and right-click to close the polygon. Completed vertices snap to the coverage grid when validated; the area and cell-size figures update with the mission.
 2. Add each aircraft with **+UAV**. Each framed UAV entry has its own **Name**, **Preset**, and **Launch dock**, even when several aircraft use the same preset. Choose one charging-station preset and **Number of docks**, then place those numbered docks. Shared launch docks stage UAVs for sequential takeoff. Camera and energy-model settings remain under UAV **Properties**. Reference specifications and assumptions are in [PRESETS.md](docs/PRESETS.md).
 3. Choose **Validate mission**. **Reset**, **Step**, and **Play** show a sweep baseline, random actions, or a loaded model. These controls do not train the actor.

@@ -47,8 +47,9 @@ def main():
             timer.start()
         uvicorn.run(create_app(args.runs_root), host="127.0.0.1", port=args.port)
     elif args.command == "config":
+        from opus_rl.app.defaults import default_experiment
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(ExperimentConfig().model_dump_json(indent=2), encoding="utf8")
+        args.output.write_text(default_experiment().model_dump_json(indent=2), encoding="utf8")
         print(args.output.resolve())
     elif args.command == "train":
         from opus_rl.training.train import train

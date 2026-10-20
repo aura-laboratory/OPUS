@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from opus_rl.app import FRONTEND, frontend_revision
+from opus_rl.app.defaults import default_experiment
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
 from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
@@ -88,7 +89,7 @@ def create_app(runs_root=None):
 
     @app.get("/api/defaults")
     def defaults():
-        config = ExperimentConfig()
+        config = default_experiment()
         return {"config": config.model_dump(), "schema": config.model_json_schema(), "presets": reference_presets()}
 
     @app.post("/api/configuration/check")

@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from shapely.geometry import Point, Polygon
 
 from opus_rl.app.server import create_app
 from opus_rl.configs import ExperimentConfig
@@ -34,6 +35,18 @@ def test_local_app_simulation_and_invalid_configuration(tmp_path):
         configuration['scenario']['min_altitude_m'] = 200
         assert client.post('/api/validate', json=configuration).status_code == 422
         assert client.post('/api/training/stop', json={}, headers={'Origin':'https://example.com'}).status_code == 403
+
+
+def test_starter_mission_covers_aristotelous_square_with_docks_inside(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        configuration = client.get('/api/defaults').json()['config']
+        response = client.post('/api/validate', json=configuration)
+        assert response.status_code == 200
+        frame = response.json()['frame']
+        polygon = Polygon(frame['polygon_wgs84'])
+        assert polygon.covers(Point(22.9409, 40.63235))
+        assert 5000 < frame['area_m2'] < 10000
+        assert all(polygon.covers(Point(dock['geographic'])) for dock in frame['stations'])
 
 
 @pytest.mark.parametrize('shared_dock', [False, True])

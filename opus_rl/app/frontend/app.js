@@ -254,7 +254,18 @@ function setTab(tab) {
   $('charts').hidden=tab!=='training';map?.invalidateSize();
   if(tab==='runs')loadRuns().catch(e=>notice(e.message,true));
 }
-function setMode(value) {mode=value;$('map-mode').textContent=value==='draw'?'Draw area':value==='dock'?'Place docks':'';if(map)map.getContainer().style.cursor=value==='idle'?'':'crosshair';}
+function setMode(value) {
+  mode=value;
+  $('draw-area').setAttribute('aria-pressed',String(value==='draw'));
+  $('place-station').setAttribute('aria-pressed',String(value==='dock'));
+  $('map-mode').textContent=value==='draw'?'Draw area':value==='dock'?'Place docks':'';
+  if(value!=='draw'){draft=[];previewLayer?.remove();previewLayer=null;}
+  if(map)map.getContainer().style.cursor=value==='idle'?'':'crosshair';
+}
+function cancelDrawing() {
+  const points=config.scenario.polygon_wgs84||lastFrame?.polygon_wgs84;
+  if(points)drawPolygon(points);
+}
 function drawPolygon(points) {
   if(!map)return;if(polygonLayer)polygonLayer.remove();
   polygonLayer=L.polygon(points.map(p=>[p[1],p[0]]),{color:'#dc9d49',weight:2,fillColor:'#dc9d49',fillOpacity:.1}).addTo(map);
@@ -286,9 +297,11 @@ async function loadRuns(){const runs=await api('/api/runs');$('run-list').innerH
 
 async function initialize() {
   try {
-    const response=await api('/api/defaults');defaults=response.config;schema=response.schema;presets=response.presets;config=structuredClone(defaults);normalizeMission(config.scenario);renderForms();
+    const [response,area]=await Promise.all([api('/api/defaults'),api('/static/default-area.json')]);
+    defaults=response.config;schema=response.schema;presets=response.presets;config=structuredClone(defaults);
+    Object.assign(config.scenario,area);normalizeMission(config.scenario);renderForms();
     if(window.L) {
-      map=L.map('map',{doubleClickZoom:false}).setView([40.63,22.94],15);
+      map=L.map('map',{doubleClickZoom:false}).setView([...config.scenario.map_origin_wgs84].reverse(),18);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
       markerGroup=L.layerGroup().addTo(map);
       map.on('click',event=>{
@@ -300,7 +313,7 @@ async function initialize() {
       });
       map.on('contextmenu',()=>{
         if(mode==='draw'&&draft.length>=3){
-          config.scenario.polygon_wgs84=[...draft];dockPoints=[];previewLayer?.remove();syncDocks();simulationReady=false;setMode('dock');
+          config.scenario.polygon_wgs84=[...draft];dockPoints=[];heatLayer?.remove();syncDocks();simulationReady=false;setMode('dock');
         }
       });
     } else {$('map').hidden=true;$('map-fallback').hidden=false;}
@@ -308,8 +321,14 @@ async function initialize() {
     dockPoints=initial.frame.stations.map(s=>({type:0,geographic:s.geographic}));
     document.querySelectorAll('nav button').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));
     action('validate',validate);action('reset-simulation',()=>reset());action('step-simulation',step);$('play-simulation').onclick=play;
-    action('draw-area',()=>{pause();draft=[];simulationReady=false;setMode('draw');polygonLayer?.remove();heatLayer?.remove();});
-    action('place-station',()=>setMode(mode==='dock'?'idle':'dock'));
+    $('draw-area').onclick=()=>{
+      pause();
+      if(mode==='draw'){cancelDrawing();setMode('idle');return;}
+      draft=[];simulationReady=false;setMode('draw');
+    };
+    $('place-station').onclick=()=>{
+      pause();if(mode==='draw')cancelDrawing();setMode(mode==='dock'?'idle':'dock');
+    };
     action('clear-docks',()=>{dockPoints=[];syncDocks();});
     action('add-uav',()=>{
       config.scenario.uav_types.push({...structuredClone(presets.uavs[0].values),name:'UAV '+(config.scenario.uav_types.length+1)});
