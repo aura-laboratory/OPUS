@@ -45,8 +45,9 @@ def test_device_selection_checks_backend_and_available_memory(monkeypatch, reque
 
 
 def test_evaluation_uses_episode_length_and_ignores_legacy_evaluation_cap():
-    config = TrainConfig.model_validate({'evaluation_horizon': 1})
+    config = TrainConfig.model_validate({'evaluation_horizon': 1, 'num_envs': 8})
     assert 'evaluation_horizon' not in config.model_dump()
+    assert 'num_envs' not in config.model_dump()
     result = evaluate(small_config(horizon=5), episodes=1, policy='heuristic', include_frame=True)
     assert result['frame']['info']['step'] == 5
     assert result['frame']['info']['simulated_seconds'] == 25
@@ -61,6 +62,7 @@ def test_hardware_defaults_and_excess_cpu_threads_have_inline_error(tmp_path, mo
         assert defaults['config']['training']['torch_threads'] == 1
         assert defaults['config']['training']['device'] == 'auto'
         assert 'evaluation_horizon' not in defaults['config']['training']
+        assert 'num_envs' not in defaults['config']['training']
         defaults['config']['training']['torch_threads'] = 2
         result = client.post('/api/configuration/check', json=defaults['config']).json()
         assert not result['valid']
@@ -74,3 +76,16 @@ def test_hardware_defaults_and_excess_cpu_threads_have_inline_error(tmp_path, mo
         result = client.post('/api/configuration/check', json=defaults['config']).json()
         assert not result['valid']
         assert result['errors'][0]['loc'] == ['training', 'device']
+
+
+def test_training_defaults_match_the_selected_mission_settings():
+    config = ExperimentConfig()
+    assert config.scenario.delta_t == 5
+    assert config.scenario.horizon == 500
+    cfg = config.training
+    assert cfg.total_steps == 10000 and cfg.rollout_steps == 100
+    assert cfg.evaluation_frequency == cfg.checkpoint_frequency == 2000
+    assert cfg.evaluation_episodes == 5 and cfg.seed == 42
+    assert cfg.torch_threads == 6 and cfg.device == 'auto'
+    with pytest.raises(ValueError, match='multiple of 2'):
+        TrainConfig(hidden_size=129)

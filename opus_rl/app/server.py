@@ -87,7 +87,7 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 2,
+                "training_controls_revision": 3,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -164,11 +164,11 @@ def create_app(runs_root=None):
             select_device(config)
             env = OpusTeamEnv(config.scenario)
             env.reset(seed=config.training.seed)
-            approximate_bytes = config.training.rollout_steps * config.training.num_envs * (
+            approximate_bytes = config.training.rollout_steps * (
                 3 * config.scenario.observation_size**2 * 2 + env.n_max**2 * 49 * 4 + 4096
             )
             if approximate_bytes > 3 * 1024**3:
-                raise HTTPException(400, "Rollout exceeds the 3 GiB v1 memory budget; reduce rollout size or environments.")
+                raise HTTPException(400, "Update interval exceeds the 3 GiB v1 memory budget; reduce the interval.")
             state.stop = threading.Event()
             state.status = {"status": "starting", "steps": 0, "total_steps": config.training.total_steps,
                             "history": [], "frame": env.frame()}

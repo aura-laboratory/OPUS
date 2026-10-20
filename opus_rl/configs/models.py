@@ -117,7 +117,7 @@ class ScenarioConfig(Config):
     min_stations: int = Field(1, ge=1)
     max_stations: int | None = Field(None, ge=1)
     delta_t: float = Field(5, gt=0, le=120)
-    horizon: int = Field(1000, ge=1, le=1000000)
+    horizon: int = Field(500, ge=1, le=1000000)
     coverage_lambda: float = Field(0.9, ge=0, lt=1)
     min_altitude_m: float = Field(20, gt=0)
     max_altitude_m: float = Field(100, gt=0)
@@ -176,8 +176,7 @@ class ScenarioConfig(Config):
 
 class TrainConfig(Config):
     total_steps: int = Field(10000, ge=1, le=100000000)
-    num_envs: int = Field(2, ge=1, le=32)
-    rollout_steps: int = Field(128, ge=1, le=4096)
+    rollout_steps: int = Field(100, ge=1, le=4096)
     learning_rate: float = Field(3e-4, gt=0, le=0.1)
     gamma: float = Field(0.99, gt=0, le=1)
     gae_lambda: float = Field(0.95, ge=0, le=1)
@@ -187,21 +186,22 @@ class TrainConfig(Config):
     max_grad_norm: float = Field(0.5, gt=0)
     batch_size: int = Field(64, ge=1)
     epochs: int = Field(4, ge=1, le=100)
-    evaluation_frequency: int = Field(2048, ge=1)
-    evaluation_episodes: int = Field(2, ge=1, le=100)
-    checkpoint_frequency: int = Field(2048, ge=1)
+    evaluation_frequency: int = Field(2000, ge=1)
+    evaluation_episodes: int = Field(5, ge=1, le=100)
+    checkpoint_frequency: int = Field(2000, ge=1)
     seed: int = Field(42, ge=0, le=2147483647)
-    torch_threads: int = Field(2, ge=1, le=64)
+    torch_threads: int = Field(6, ge=1, le=64)
     device: Literal["cpu", "cuda", "auto"] = "auto"
-    hidden_size: int = Field(128, ge=32, le=512)
+    hidden_size: int = Field(128, ge=32, le=512, multiple_of=2)
     target_kl: float = Field(0.03, gt=0)
 
     @model_validator(mode="before")
     @classmethod
-    def remove_legacy_evaluation_length(cls, data):
+    def remove_legacy_controls(cls, data):
         if isinstance(data, dict):
             data = dict(data)
             data.pop("evaluation_horizon", None)
+            data.pop("num_envs", None)
         return data
 
 

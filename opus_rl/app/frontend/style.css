@@ -58,4 +58,3 @@ button[aria-pressed]:active{box-shadow:inset 0 3px 6px #08120d88;transform:trans
 .reward-equation math{font-size:15px;margin:8px 0;color:#eed2a9}
 .reward-equation p{font-size:10px;line-height:1.6;margin:10px 0 0}
 #training-diagnostics>p{margin:10px 0 0}
-.full-field{grid-column:1/-1}

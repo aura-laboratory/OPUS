@@ -8,6 +8,8 @@ Persistent Multi-UAV Area Scanning with Gymnasium and MAPPO
 
 ## 1. Document purpose and project context
 
+The current user-selected training defaults supersede the baseline tables below: one environment, ΔT 5 s, Episode length 500 steps, 10,000 total training steps, Update interval 100 steps, evaluation/checkpoints every 2,000 steps, 5 evaluation episodes, seed 42, 6 CPU threads and Auto compute. Evaluation uses the same episode length. Current executable choices are recorded in `IMPLEMENTATION.md`.
+
 This document consolidates the current agreed design of the OPUS reinforcement-learning loop. It is intended to be self-contained context for architecture refinement and for a later prompt that generates a first working implementation. OPUS addresses the limited endurance of individual UAVs through cooperative multi-UAV operation, automatic rotation through charging stations, and high-level decision-making that is lightweight enough for extensive RL training. The immediate research target is persistent area scanning: a team must keep a georeferenced area well and uniformly observed for an effectively unbounded mission rather than cover it once and stop.
 
 > **Central design principle:** The v1 environment abstracts low-level rotor physics but preserves the variables that matter for planning: position, velocity, acceleration, yaw, camera pitch, elapsed time, energy expenditure, battery, charging, camera geometry, local GSD and persistent spatial coverage quality.

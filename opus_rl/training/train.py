@@ -3,7 +3,6 @@ import json
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -72,8 +71,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                "map_buffer_dtype": "float16, encoded once per environment per transition"})
     torch.set_num_threads(cfg.torch_threads)
     rng = np.random.default_rng(cfg.seed)
-    envs = [OpusTeamEnv(config.scenario) for _ in range(cfg.num_envs)]
-    observations = [env.reset(seed=cfg.seed + i)[0] for i, env in enumerate(envs)]
+    env = OpusTeamEnv(config.scenario)
+    observation, _ = env.reset(seed=cfg.seed)
     with MODEL_INIT_LOCK, torch.random.fork_rng(devices=[]):
         torch.manual_seed(cfg.seed)
         model = ActorCritic(cfg.hidden_size).to(device)
@@ -82,8 +81,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     started = time.perf_counter()
     steps, update_index, next_evaluation, next_checkpoint = 0, 0, cfg.evaluation_frequency, cfg.checkpoint_frequency
     best_return = -np.inf
-    episode_returns = np.zeros((cfg.num_envs, envs[0].n_max))
-    episodes = np.zeros(cfg.num_envs, np.int64)
+    episode_returns = np.zeros(env.n_max)
+    episode = 0
     agent_steps = 0
     summary = {"run_id": run_id, "status": "running", "steps": 0, "version": __version__,
                "agent_steps": 0,
@@ -104,13 +103,9 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                     "numpy_rng": rng.bit_generator.state}, temporary)
         temporary.replace(target)
 
-    def collect(pair):
-        env, action = pair
-        return env.step(action)
-
     try:
         checkpoint("initial.pt")
-        with ThreadPoolExecutor(max_workers=cfg.num_envs) as pool, (directory / "metrics.csv").open(
+        with (directory / "metrics.csv").open(
             "w", newline="", encoding="utf8"
         ) as csv_file, (directory / "uav-rewards.csv").open("w", newline="", encoding="utf8") as uav_file:
             writer = None
@@ -122,49 +117,43 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 batch = {k: [] for k in ("obs", "latent", "log_prob", "values", "next_values",
                                         "rewards", "terminated", "ended", "masks", "value_masks")}
                 coverage_means, energies, completed_returns, reward_components = [], [], [], []
-                for _ in range(min(cfg.rollout_steps, (cfg.total_steps - steps + cfg.num_envs - 1) // cfg.num_envs)):
+                for _ in range(min(cfg.rollout_steps, cfg.total_steps - steps)):
                     if stop_event.is_set():
                         break
-                    obs = stack_dict([pack_observation(o) for o in observations])
+                    obs = stack_dict([pack_observation(observation)])
                     actions, latent, probabilities, values = model.act(
                         tensor_dict(obs, device), generator=action_rng
                     )
-                    transitions = list(pool.map(collect, zip(envs, actions.cpu().numpy())))
-                    new_obs, rewards, terminal, ended, masks = [], [], [], [], []
-                    next_observation = stack_dict([pack_observation(transition[0]) for transition in transitions])
+                    next_obs, _, term, trunc, info = env.step(actions.cpu().numpy()[0])
+                    next_observation = stack_dict([pack_observation(next_obs)])
                     with torch.no_grad():
                         next_values = model.value(tensor_dict(next_observation, device)).cpu().numpy()
-                    for i, (observation, _, term, trunc, info) in enumerate(transitions):
-                        individual = np.asarray(info["uav_rewards"], np.float32)
-                        episode_returns[i] += individual
-                        count = info["active_uavs"]
-                        agent_steps += count
-                        for j, uav in enumerate(envs[i].uavs):
-                            uav_writer.writerow({"training_step": steps + i + 1, "environment": i,
-                                "episode": int(episodes[i]), "episode_step": info["step"], "uav_id": j + 1,
-                                "inventory_index": uav.inventory_index + 1, "name": uav.spec.name,
-                                "reward": float(individual[j]), **info["uav_reward_terms"][j],
-                                "energy_Wh": info["energy_Wh"][j], "actor_executed": info["actor_training_mask"][j]})
-                        if term or trunc:
-                            completed_returns.extend(episode_returns[i, :count].tolist())
-                            episode_returns[i] = 0
-                            episodes[i] += 1
-                            observation = envs[i].reset()[0]
-                        new_obs.append(observation)
-                        rewards.append(individual)
-                        terminal.append(term)
-                        ended.append(term or trunc)
-                        masks.append(info["actor_training_mask"])
-                        coverage_means.append(info["coverage"]["mean"])
-                        energies.append(sum(info["energy_Wh"]))
-                        reward_components.extend(info["uav_reward_terms"][:count])
+                    individual = np.asarray(info["uav_rewards"], np.float32)
+                    episode_returns += individual
+                    count = info["active_uavs"]
+                    agent_steps += count
+                    for j, uav in enumerate(env.uavs):
+                        uav_writer.writerow({"training_step": steps + 1, "environment": 0,
+                            "episode": episode, "episode_step": info["step"], "uav_id": j + 1,
+                            "inventory_index": uav.inventory_index + 1, "name": uav.spec.name,
+                            "reward": float(individual[j]), **info["uav_reward_terms"][j],
+                            "energy_Wh": info["energy_Wh"][j], "actor_executed": info["actor_training_mask"][j]})
+                    if term or trunc:
+                        completed_returns.extend(episode_returns[:count].tolist())
+                        episode_returns.fill(0)
+                        episode += 1
+                        next_obs, _ = env.reset()
+                    coverage_means.append(info["coverage"]["mean"])
+                    energies.append(sum(info["energy_Wh"]))
+                    reward_components.extend(info["uav_reward_terms"][:count])
                     for key, value in {"obs": obs, "latent": latent.cpu().numpy(),
                                        "log_prob": probabilities.cpu().numpy(), "values": values.cpu().numpy(),
-                                       "next_values": next_values, "rewards": rewards, "terminated": terminal,
-                                       "ended": ended, "masks": masks, "value_masks": obs["active_mask"]}.items():
+                                       "next_values": next_values, "rewards": individual[None, :], "terminated": [term],
+                                       "ended": [term or trunc], "masks": [info["actor_training_mask"]],
+                                       "value_masks": obs["active_mask"]}.items():
                         batch[key].append(value)
-                    observations = new_obs
-                    steps += cfg.num_envs
+                    observation = next_obs
+                    steps += 1
                 if not batch["rewards"]:
                     break
                 arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key != "obs"}
@@ -213,7 +202,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 save_json(directory / "summary.json", summary)
                 if callback:
                     callback({"run_id": run_id, "steps": steps, "total_steps": cfg.total_steps,
-                              "metrics": stats, "evaluation": evaluation, "frame": envs[0].frame()})
+                              "metrics": stats, "evaluation": evaluation, "frame": env.frame()})
             checkpoint("final.pt")
             if not (directory / "best.pt").exists():
                 checkpoint("best.pt")
@@ -227,6 +216,5 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         summary.update(steps=steps, agent_steps=agent_steps, elapsed_seconds=time.perf_counter() - started,
                        finished_utc=datetime.now(timezone.utc).isoformat())
         save_json(directory / "summary.json", summary)
-        for env in envs:
-            env.close()
+        env.close()
     return directory, summary

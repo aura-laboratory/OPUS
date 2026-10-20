@@ -18,7 +18,7 @@ from test_environment import small_config
 
 def experiment():
     return ExperimentConfig(scenario=small_config(horizon=16),
-                            training=TrainConfig(total_steps=32, num_envs=1, rollout_steps=8,
+                            training=TrainConfig(total_steps=32, rollout_steps=8,
                               epochs=1, hidden_size=32, batch_size=8,
                               evaluation_frequency=16, evaluation_episodes=1,
                               checkpoint_frequency=16, torch_threads=1)).model_dump()

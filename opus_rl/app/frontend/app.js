@@ -23,14 +23,14 @@ const fields = {
   landing_energy_Wh:['Landing energy','Wh'], collision_radius_m:['Effective radius','m'],
   camera_width_px:['Image width','px'], camera_height_px:['Image height','px'],
   camera_fov_deg:['Field of view','°'], charge_power_W:['Charging power','W'],
-  total_steps:['Total team steps','steps'], num_envs:['Parallel environments',''],
-  rollout_steps:['Rollout length','steps/env'], evaluation_frequency:['Evaluation interval','steps'],
+  total_steps:['Total team steps','steps'],
+  rollout_steps:['Update interval','steps'], evaluation_frequency:['Evaluation interval','steps'],
   evaluation_episodes:['Evaluation episodes',''],
   checkpoint_frequency:['Checkpoint interval','steps'], seed:['Seed',''], torch_threads:['CPU threads',''],
   learning_rate:['Learning rate',''], gamma:['Discount γ',''], gae_lambda:['GAE λ',''],
   clip_range:['PPO clip',''], entropy_coef:['Entropy coefficient',''], value_coef:['Value coefficient',''],
   max_grad_norm:['Gradient limit',''], batch_size:['Minibatch size','team steps'], epochs:['Update epochs',''],
-  hidden_size:['Network width','units'], target_kl:['Target KL',''],
+  hidden_size:['Network width','neurons'], target_kl:['Target KL',''],
   min_uavs:['Minimum UAVs',''], max_uavs:['Maximum UAVs',''],
   min_stations:['Minimum docks',''], max_stations:['Maximum docks',''],
   mean_weight:['Mean quality',''], fairness_weight:['Fairness',''], p10_weight:['Lowest 10%',''],
@@ -109,7 +109,7 @@ function numericField(object,key,path,properties,onChange) {
   const text=document.createElement('span'); text.textContent=title; label.append(text);
   const box=document.createElement('span'); box.className='value-box';
   const input=document.createElement('input'); input.id=path; input.type='number';
-  input.value=object[key]===null?'':object[key]*scale; input.step=integer?'1':'any';
+  input.value=object[key]===null?'':object[key]*scale; input.step=definition.multipleOf|| (integer?'1':'any');
   if(definition.minimum!==undefined) input.min=definition.minimum*scale;
   if(definition.maximum!==undefined) input.max=definition.maximum*scale;
   if(key==='torch_threads'&&hardware)input.max=Math.min(hardware.cpu_threads,definition.maximum||Infinity);
@@ -245,10 +245,10 @@ function renderForms() {
   const s=config.scenario,properties=schema.$defs.ScenarioConfig.properties;
   numericFields('mission-fields',s,['required_gsd_m','min_altitude_m','max_altitude_m','coverage_lambda','grid_size','observation_size'],'scenario',properties);
   renderUAVs();renderStation();
-  const main=['total_steps','num_envs','rollout_steps','evaluation_frequency','evaluation_episodes','checkpoint_frequency','seed','torch_threads'];
+  const main=['total_steps','rollout_steps','evaluation_frequency','evaluation_episodes','checkpoint_frequency','seed','torch_threads'];
   numericFields('training-fields',s,['delta_t','horizon'],'scenario',properties);
   for(const key of main)$('training-fields').append(numericField(config.training,key,'training.'+key,schema.$defs.TrainConfig.properties));
-  const device=document.createElement('label');device.className='field full-field';device.textContent='Compute device';
+  const device=document.createElement('label');device.className='field';device.textContent='Compute device';
   const select=document.createElement('select');select.id='training.device';
   select.add(new Option('Auto','auto'));select.add(new Option('CPU','cpu'));
   const gpu=new Option(hardware?.cuda_available?'GPU':'GPU (unavailable)','cuda');gpu.disabled=!hardware?.cuda_available;select.add(gpu);
@@ -257,7 +257,7 @@ function renderForms() {
   select.setAttribute('aria-describedby',deviceError.id);
   const detected=hardware?.gpu_names?.length?'Detected GPU: '+hardware.gpu_names.join(', ')+'.':'';
   $('training-fields').append(attachFieldHelp(device,'device',detected));
-  numericFields('ppo-fields',config.training,Object.keys(config.training).filter(k=>!main.includes(k)&&!['device','evaluation_horizon'].includes(k)),'training',schema.$defs.TrainConfig.properties);
+  numericFields('ppo-fields',config.training,Object.keys(config.training).filter(k=>!main.includes(k)&&!['device','evaluation_horizon','num_envs'].includes(k)),'training',schema.$defs.TrainConfig.properties);
   numericFields('reward-fields',s.reward,Object.keys(s.reward),'scenario.reward',schema.$defs.RewardConfig.properties);
   updateRewardEquation();
 }
@@ -359,7 +359,7 @@ async function initialize() {
     });
     action('start-training',async()=>{
       const health=await api('/api/health');
-      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==2)throw Error('Restart OPUS to load the updated training controls.');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==3)throw Error('Restart OPUS to load the updated training controls.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});

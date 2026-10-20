@@ -4,7 +4,7 @@ Validated locally on 2026-10-09, using Python 3.11.17 and CPU PyTorch 2.14.1, on
 
 ## Automated checks
 
-**48 tests pass** as of 2026-10-20. Ruff and JavaScript syntax checks pass. The suite covers:
+**49 tests pass** as of 2026-10-20. Ruff and JavaScript syntax checks pass. The suite covers:
 
 - Gymnasium signatures, spaces, deterministic resets, observation ownership and vector environments.
 - Fixed/variable typed inventory, padding and count limits.
@@ -36,7 +36,7 @@ The complete configurations, metrics, initial/best/final models, intermediate ch
 
 ## Long episode and full-resolution checks
 
-A two-UAV sweep run with the default 1,000-decision horizon and a reduced 64² grid reached **5,000 simulated seconds**, truncated at exactly decision 1,000, and had **zero crashes**. It exercised automatic takeoff, coverage, reserved return transit and charging. The status counts across both UAVs were 1,042 coverage, 944 charging, 10 recharge-transit and 4 takeoff samples. The episode took 6.1 seconds. The reduced grid changes spatial discretization; this is a battery/controller/horizon check.
+A two-UAV sweep run with the then-default 1,000-decision horizon and a reduced 64² grid reached **5,000 simulated seconds**, truncated at exactly decision 1,000, and had **zero crashes**. It exercised automatic takeoff, coverage, reserved return transit and charging. The status counts across both UAVs were 1,042 coverage, 944 charging, 10 recharge-transit and 4 takeoff samples. The episode took 6.1 seconds. The reduced grid changes spatial discretization; this is a battery/controller/horizon check.
 
 At the full default **1024² coverage / 128² observation** resolution with two UAVs, 50 sweep decisions took **33.1 seconds** while other validation work was running. Reset took 0.30 seconds; mean final quality was 0.546, with no crashes. Full-resolution CPU training is substantially slower than the reduced-grid learning example. Through the browser, a full-resolution two-UAV training job stopped cleanly at 300 team steps and saved checkpoints; its observed throughput was approximately 4.1 team steps/s. A separate bounded 32-step full-resolution job completed with evaluation and model export. Neither short run establishes effective multi-UAV learning.
 
@@ -89,6 +89,14 @@ The original saved MAPPO best model still evaluates to return **40.8275199264040
 All 48 tests pass after merging episode fields into Training, removing the independent evaluation cap, and adding hardware discovery. API evaluation reaches the configured episode horizon; legacy configurations containing `evaluation_horizon` remain readable. Hardware checks verify cached discovery, a CPU count displayed separately from GPU support, Auto fallback without a compatible backend or sufficient memory, and inline errors for excess CPU threads. GPU selection paths are tested with mocked availability and memory; actual GPU training is untested. The current machine reports 12 logical CPU threads and a Radeon RX 580 with a CPU-only PyTorch build.
 
 Both frontend scripts pass syntax checks. A standalone UI preview was prepared without starting an OPUS server, but browser policy blocked local-file navigation. The new tooltip delay and MathML layout have not been visually verified in the browser.
+
+## Single-environment update revision: 2026-10-20
+
+All 49 tests pass. Training creates exactly one simulator and no environment pool. The update test crosses episode resets with sampled fleet sizes, verifies individual reward averages and zero-valued environment IDs, and completes an intentionally non-divisible 23-step budget exactly. The separate/shared launch-dock train/save/reload/evaluate/export checks still pass. Earlier `num_envs` configuration keys are discarded during loading.
+
+Defaults match the selected screenshot: ΔT 5 s, 500-step episodes, 10,000 training steps, Update interval 100 steps, evaluation and checkpoints every 2,000 steps, 5 evaluation episodes, seed 42, 6 CPU threads (capped to available threads), and Auto device. The current architecture is unchanged; the width tooltip now describes all affected layers and uses neurons. Odd widths are rejected before training because the teammate encoder uses H/2.
+
+The existing user-started server was used for browser verification without a restart or training launch. Checks confirmed the removed parallel selector, Update interval label, compact CPU/device row, neuron units, diagnostics placeholder, native MathML rendering, and live coefficient updates. The delayed description stayed hidden initially and appeared after about 1.6 seconds of focus. This completes visual verification of the previous field-help/equation changes. The older server's defaults were manually set to the requested values in this separate browser tab for the screenshot; new backend defaults are verified by tests and require a server restart.
 
 ## Remaining research limits
 

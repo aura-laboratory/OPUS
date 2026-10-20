@@ -130,7 +130,7 @@ def test_legacy_checkpoint_loading_preserves_policy_reward_and_global_rng(tmp_pa
     assert torch.equal(expected, loaded.act(observation, deterministic=True)[0])
 
 
-def test_variable_parallel_rollouts_use_individual_rewards_and_ignore_team_scalar(tmp_path, monkeypatch):
+def test_single_environment_updates_use_individual_rewards_and_ignore_team_scalar(tmp_path, monkeypatch):
     import csv
     from collections import Counter
     from statistics import mean
@@ -147,17 +147,18 @@ def test_variable_parallel_rollouts_use_individual_rewards_and_ignore_team_scala
     monkeypatch.setattr(OpusTeamEnv, 'step', unrelated_scalar)
     config = ExperimentConfig(scenario=small_config(horizon=4, fleet_mode='variable',
         uav_types=[UAVType(available_count=3, fixed_count=2)]), training=TrainConfig(
-        total_steps=24, num_envs=2, rollout_steps=4, batch_size=2, hidden_size=32, epochs=1,
+        total_steps=23, rollout_steps=4, batch_size=2, hidden_size=32, epochs=1,
         torch_threads=1, evaluation_frequency=1000, checkpoint_frequency=1000))
-    directory, summary = train(config, tmp_path, output_name='parallel')
+    directory, summary = train(config, tmp_path, output_name='single')
     with (directory / 'uav-rewards.csv').open(newline='', encoding='utf8') as saved:
         rows = list(csv.DictReader(saved))
     assert summary['status'] == 'completed'
+    assert summary['steps'] == 23  # A partial final update cannot overshoot the budget.
     assert len(rows) == summary['agent_steps']
-    assert {row['environment'] for row in rows} == {'0', '1'}
+    assert {row['environment'] for row in rows} == {'0'}
     counts = list(Counter(row['training_step'] for row in rows).values())
     assert len(set(counts)) > 1  # Fleet size varies after resets, with padded slots excluded.
-    last_batch = [float(row['reward']) for row in rows if int(row['training_step']) > 16]
+    last_batch = [float(row['reward']) for row in rows if int(row['training_step']) > 20]
     assert np.isclose(summary['metrics']['mean_step_reward'], mean(last_batch))
     assert abs(summary['metrics']['mean_step_reward']) < 1
     model, _, data = load_checkpoint(directory / 'final.pt')
