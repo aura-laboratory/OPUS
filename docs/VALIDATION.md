@@ -98,6 +98,14 @@ Defaults match the selected screenshot: ΔT 5 s, 500-step episodes, 10,000 train
 
 The existing user-started server was used for browser verification without a restart or training launch. Checks confirmed the removed parallel selector, Update interval label, compact CPU/device row, neuron units, diagnostics placeholder, native MathML rendering, and live coefficient updates. The delayed description stayed hidden initially and appeared after about 1.6 seconds of focus. This completes visual verification of the previous field-help/equation changes. The older server's defaults were manually set to the requested values in this separate browser tab for the screenshot; new backend defaults are verified by tests and require a server restart.
 
+## Live training telemetry and profiling: 2026-10-20
+
+All 52 tests pass. New checks verify that every training transition publishes progress before optimizer updates, preserves the final episode readings before reset, reports episode/time/reward/battery correctly, and keeps scheduled evaluation out of training samples. Stopping mid-rollout preserves the last step, performs the partial update, and saves a final checkpoint. API/export checks include complete step logs, timing logs and per-UAV battery readings. Cursor-based polling returns only unseen training samples; the server retains a bounded 2,000-point window and keeps update-level learning diagnostics separate.
+
+Timing checks verify call counts for inference, simulation, bootstrap, optimization and evaluation; simulator subphase totals fit within their parent; measured top-level percentages sum to 100%. CUDA synchronization paths exist for profiling but have not been exercised on GPU hardware. Processing-time counters are instrumentation, not a speed or convergence benchmark.
+
+Ruff, both JavaScript syntax checks and whitespace checks pass. The OPUS server was closed during this revision and was not launched or restarted. Tab-specific controls, new metric descriptions and profiling layout have not been visually verified in a running browser. Start OPUS again to load the new backend and interface.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

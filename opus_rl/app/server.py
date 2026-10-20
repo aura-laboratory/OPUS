@@ -5,6 +5,7 @@ import threading
 import time
 import traceback
 import zipfile
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class State:
         self.worker = None
         self.stop = threading.Event()
         self.status = {"status": "idle", "history": []}
+        self.samples = deque(maxlen=2000)
         self.geocode_lock = asyncio.Lock()
         self.last_geocode = 0.0
         self.geocode_cache = {}
@@ -42,9 +44,16 @@ class State:
     def publish(self, update):
         with self.lock:
             previous = self.status
-            history = previous.get("history", []) + [update["metrics"]]
+            update = update.copy()
+            sample = update.pop("sample", None)
+            if sample is not None:
+                self.samples.append(sample)
+                update["live"] = sample
+            history = previous.get("history", [])
+            if "metrics" in update:
+                history = (history + [update["metrics"]])[-1000:]
             self.status = {**previous, **update, "status": "stopping" if self.stop.is_set() else "running",
-                           "history": history[-1000:]}
+                           "history": history}
 
     def run_directory(self, run_id):
         if Path(run_id).name != run_id or run_id in (".", ".."):
@@ -87,7 +96,7 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 3,
+                "training_controls_revision": 4,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -170,8 +179,10 @@ def create_app(runs_root=None):
             if approximate_bytes > 3 * 1024**3:
                 raise HTTPException(400, "Update interval exceeds the 3 GiB v1 memory budget; reduce the interval.")
             state.stop = threading.Event()
+            state.samples.clear()
             state.status = {"status": "starting", "steps": 0, "total_steps": config.training.total_steps,
-                            "history": [], "frame": env.frame()}
+                            "phase": "starting", "history": [], "frame": env.frame(), "frame_step": 0,
+                            "telemetry": env.telemetry()}
 
             def work():
                 try:
@@ -197,9 +208,12 @@ def create_app(runs_root=None):
             return {"status": state.status["status"]}
 
     @app.get("/api/training/status")
-    def status():
+    def status(after_step: int = -1, run_id: str = ""):
         with state.lock:
-            return state.status.copy()
+            result = state.status.copy()
+            cursor = after_step if run_id == result.get("run_id") else -1
+            result["samples"] = [row for row in state.samples if row["steps"] > cursor]
+            return result
 
     @app.get("/api/runs")
     def runs():

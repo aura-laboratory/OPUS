@@ -1,5 +1,7 @@
 """A Gymnasium team environment exposing individual UAV rewards in info."""
 
+import time
+
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -198,6 +200,8 @@ class OpusTeamEnv(gym.Env):
         uav.station = None
 
     def step(self, action):
+        phase_started = time.perf_counter()
+        self.step_timings = {}
         if self.finished or not self.uavs:
             raise RuntimeError("Reset the environment before stepping a new episode.")
         action = np.asarray(action, dtype=float)
@@ -234,11 +238,11 @@ class OpusTeamEnv(gym.Env):
             for j in trajectories:
                 if j <= i:
                     continue
-                distance, time = minimum_separation(trajectories[i], trajectories[j])
+                distance, closest_time = minimum_separation(trajectories[i], trajectories[j])
                 if distance < self.uavs[i].spec.collision_radius_m + self.uavs[j].spec.collision_radius_m:
                     collisions.append([i, j])
                     for k in (i, j):
-                        collision_times[k] = min(collision_times.get(k, dt), time)
+                        collision_times[k] = min(collision_times.get(k, dt), closest_time)
         for j, movement in movements.items():
             uav = self.uavs[j]
             until = collision_times.get(j, dt)
@@ -276,6 +280,8 @@ class OpusTeamEnv(gym.Env):
         for j in collision_times:
             if j not in movements:
                 self._crash(j)
+        self.step_timings["motion_safety"] = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         instantaneous = np.zeros_like(self.coverage)
         runner_up = np.zeros_like(self.coverage)
         owners = np.full(self.coverage.shape, -1, np.int16)
@@ -296,6 +302,8 @@ class OpusTeamEnv(gym.Env):
                 camera_stats[key] += statistics[key] * statistics["valid_cells"]
         for key in ("mean_gsd", "mean_incidence_deg"):
             camera_stats[key] /= max(1, gsd_weight)
+        self.step_timings["camera"] = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         previous = self.coverage
         self.coverage = update_coverage(previous, instantaneous, self.area.mask, cfg.coverage_lambda)
         coverage_metrics = metrics(self.coverage, self.area.mask)
@@ -321,7 +329,11 @@ class OpusTeamEnv(gym.Env):
         self.finished = terminated or truncated
         self.last_info = self._info(total, terms, actual_mask, energies, collisions, denied,
                                     float(projections.sum()), camera_stats)
-        return self._observation(), total, terminated, truncated, self.last_info.copy()
+        self.step_timings["coverage_reward"] = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
+        observation = self._observation()
+        self.step_timings["observation"] = time.perf_counter() - phase_started
+        return observation, total, terminated, truncated, self.last_info.copy()
 
     def _own_features(self, uav):
         spec = uav.spec
@@ -400,9 +412,8 @@ class OpusTeamEnv(gym.Env):
                 "uav_statuses": [u.status for u in self.uavs], "active_uavs": len(self.uavs),
                 "crashed_uavs": sum(u.status == "crashed" for u in self.uavs), "camera": camera or {}}
 
-    def frame(self):
-        stride = max(1, self.config.grid_size // 64)
-        heatmap = fuse(self.coverage, self.area.mask, self.config.grid_size // stride)
+    def telemetry(self):
+        """Current readings without raster fusion or geographic map overlays."""
         return {"info": self.last_info, "uavs": [{"id": j, "inventory_index": u.inventory_index,
                   "launch_dock": self.config.uav_launch_docks[u.inventory_index] if self.config.uav_launch_docks
                   else u.inventory_index % len(self.stations), "position": u.position.tolist(),
@@ -410,7 +421,12 @@ class OpusTeamEnv(gym.Env):
                   "battery_ratio": u.battery / u.spec.battery_capacity_Wh,
                   "reward": float(self.uav_rewards[j]),
                   "yaw": u.yaw, "gimbal": u.gimbal, "type": u.spec.name, "status": u.status}
-                  for j, u in enumerate(self.uavs)],
+                  for j, u in enumerate(self.uavs)]}
+
+    def frame(self):
+        stride = max(1, self.config.grid_size // 64)
+        heatmap = fuse(self.coverage, self.area.mask, self.config.grid_size // stride)
+        return {**self.telemetry(),
                 "stations": [{"position": s.position.tolist(), "type_index": s.type_index,
                   "geographic": self.area.geographic(s.position[None, :2])[0].tolist(),
                   "occupied": s.occupied, "reserved": s.reserved} for s in self.stations],

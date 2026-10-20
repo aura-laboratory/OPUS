@@ -79,6 +79,9 @@ def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock,
         assert status['steps'] == 32
         assert status['summary']['algorithm'] == 'ippo'
         assert status['summary']['agent_steps'] == 64
+        assert len(status['samples']) == 32
+        assert status['live']['steps'] == status['steps']
+        assert status['timings']['simulation']['calls'] == 32
         assert all(0 <= row['actor_sample_fraction'] <= 1 for row in status['history'])
         run = client.get('/api/runs').json()[0]
         assert {'initial.pt','final.pt','best.pt'}.issubset(run['checkpoints'])
@@ -99,7 +102,8 @@ def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock,
         assert evaluation.json()['return_mean'] == pytest.approx(mean([u['return'] for u in individual_returns]))
         archive = client.get(f"/api/runs/{run['run_id']}/export")
         with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:
-            assert {'config.json','normalization.json','metrics.csv','uav-rewards.csv','summary.json','best.pt'}.issubset(zipped.namelist())
+            assert {'config.json','normalization.json','metrics.csv','steps.csv','timings.csv',
+                    'uav-rewards.csv','summary.json','best.pt'}.issubset(zipped.namelist())
             assert json.loads(zipped.read('summary.json'))['seed'] == 42
             rewards = list(csv.DictReader(io.StringIO(zipped.read('uav-rewards.csv').decode())))
             assert len(rewards) == 64

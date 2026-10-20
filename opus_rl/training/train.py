@@ -19,6 +19,7 @@ from opus_rl.marl.network import (
 from opus_rl.marl.ppo import generalized_advantage, update
 from .evaluate import evaluate
 from .hardware import hardware_info, select_device
+from .timing import Timings
 
 
 def save_json(path, value):
@@ -51,6 +52,7 @@ def load_checkpoint(path, device="cpu"):
 
 
 def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=None, output_name=None):
+    setup_started = time.perf_counter()
     config = config.model_copy(deep=True)
     config.scenario.reward_mode = "individual"  # New runs always use IPPO, including from legacy run configs.
     cfg = config.training
@@ -78,7 +80,11 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         model = ActorCritic(cfg.hidden_size).to(device)
     action_rng = torch.Generator(device=device).manual_seed(cfg.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, eps=1e-5)
-    started = time.perf_counter()
+    started = setup_started
+    timings = Timings(device)
+    last_frame_at = last_flush_at = started
+    last_frame_step = 0
+    latest_telemetry = env.telemetry()
     steps, update_index, next_evaluation, next_checkpoint = 0, 0, cfg.evaluation_frequency, cfg.checkpoint_frequency
     best_return = -np.inf
     episode_returns = np.zeros(env.n_max)
@@ -91,8 +97,16 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                "device_reason": device_reason, "hardware": hardware,
                "started_utc": datetime.now(timezone.utc).isoformat(), "evaluation": None}
     save_json(directory / "summary.json", summary)
+    timings.record("initialization", time.perf_counter() - started)
 
-    def checkpoint(name):
+    def publish(phase, **extra):
+        if callback:
+            callback({"run_id": run_id, "steps": steps, "total_steps": cfg.total_steps,
+                      "phase": phase, "elapsed_seconds": time.perf_counter() - started,
+                      "steps_per_second": steps / max(time.perf_counter() - started, 1e-6),
+                      "timings": timings.snapshot(), **extra})
+
+    def checkpoint_file(name):
         target = directory / name
         temporary = target.with_suffix(".tmp")
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
@@ -103,16 +117,41 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                     "numpy_rng": rng.bit_generator.state}, temporary)
         temporary.replace(target)
 
+    def checkpoint(name):
+        publish("checkpointing")
+        with timings.measure("checkpoint"):
+            checkpoint_file(name)
+
     try:
         checkpoint("initial.pt")
         with (directory / "metrics.csv").open(
             "w", newline="", encoding="utf8"
-        ) as csv_file, (directory / "uav-rewards.csv").open("w", newline="", encoding="utf8") as uav_file:
+        ) as csv_file, (directory / "uav-rewards.csv").open("w", newline="", encoding="utf8") as uav_file, (
+            directory / "steps.csv"
+        ).open("w", newline="", encoding="utf8") as step_file, (
+            directory / "timings.csv"
+        ).open("w", newline="", encoding="utf8") as timing_file:
             writer = None
             uav_writer = csv.DictWriter(uav_file, fieldnames=["training_step", "environment", "episode", "episode_step",
                 "uav_id", "inventory_index", "name", "reward", "coverage", "energy", "projection", "collision",
-                "crash", "energy_Wh", "actor_executed"])
+                "crash", "energy_Wh", "actor_executed", "battery_ratio", "simulated_seconds"])
             uav_writer.writeheader()
+            step_writer = csv.DictWriter(step_file, fieldnames=["steps", "episode", "episode_step", "episode_length",
+                "simulated_seconds", "total_simulated_seconds", "mean_coverage", "p10", "fairness",
+                "mean_step_reward", "energy_Wh", "crashed_uavs", "collision_pairs"])
+            step_writer.writeheader()
+            timing_writer = csv.DictWriter(timing_file, fieldnames=["steps", "phase", "calls", "seconds",
+                "last_seconds", "max_seconds", "mean_ms", "percent"])
+            timing_writer.writeheader()
+
+            def log_timings():
+                for phase, row in timings.snapshot().items():
+                    timing_writer.writerow({"steps": steps, "phase": phase, **row})
+                timing_file.flush()
+
+            if callback:
+                with timings.measure("telemetry"):
+                    publish("collecting", telemetry=latest_telemetry, frame=env.frame(), frame_step=0)
             while steps < cfg.total_steps and not stop_event.is_set():
                 batch = {k: [] for k in ("obs", "latent", "log_prob", "values", "next_values",
                                         "rewards", "terminated", "ended", "masks", "value_masks")}
@@ -120,51 +159,86 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 for _ in range(min(cfg.rollout_steps, cfg.total_steps - steps)):
                     if stop_event.is_set():
                         break
-                    obs = stack_dict([pack_observation(observation)])
-                    actions, latent, probabilities, values = model.act(
-                        tensor_dict(obs, device), generator=action_rng
-                    )
-                    next_obs, _, term, trunc, info = env.step(actions.cpu().numpy()[0])
-                    next_observation = stack_dict([pack_observation(next_obs)])
-                    with torch.no_grad():
+                    with timings.measure("policy", gpu=True):
+                        obs = stack_dict([pack_observation(observation)])
+                        actions, latent, probabilities, values = model.act(
+                            tensor_dict(obs, device), generator=action_rng)
+                        action_array = actions.cpu().numpy()[0]
+                    with timings.measure("simulation"):
+                        next_obs, _, term, trunc, info = env.step(action_array)
+                    for phase, seconds in env.step_timings.items():
+                        timings.record("simulation." + phase, seconds)
+                    with timings.measure("bootstrap", gpu=True), torch.no_grad():
+                        next_observation = stack_dict([pack_observation(next_obs)])
                         next_values = model.value(tensor_dict(next_observation, device)).cpu().numpy()
-                    individual = np.asarray(info["uav_rewards"], np.float32)
-                    episode_returns += individual
-                    count = info["active_uavs"]
-                    agent_steps += count
-                    for j, uav in enumerate(env.uavs):
-                        uav_writer.writerow({"training_step": steps + 1, "environment": 0,
-                            "episode": episode, "episode_step": info["step"], "uav_id": j + 1,
-                            "inventory_index": uav.inventory_index + 1, "name": uav.spec.name,
-                            "reward": float(individual[j]), **info["uav_reward_terms"][j],
-                            "energy_Wh": info["energy_Wh"][j], "actor_executed": info["actor_training_mask"][j]})
+                    with timings.measure("buffer"):
+                        individual = np.asarray(info["uav_rewards"], np.float32)
+                        episode_returns += individual
+                        count = info["active_uavs"]
+                        agent_steps += count
+                        coverage_means.append(info["coverage"]["mean"])
+                        energies.append(sum(info["energy_Wh"]))
+                        reward_components.extend(info["uav_reward_terms"][:count])
+                        for key, value in {"obs": obs, "latent": latent.cpu().numpy(),
+                                           "log_prob": probabilities.cpu().numpy(), "values": values.cpu().numpy(),
+                                           "next_values": next_values, "rewards": individual[None, :],
+                                           "terminated": [term], "ended": [term or trunc],
+                                           "masks": [info["actor_training_mask"]],
+                                           "value_masks": obs["active_mask"]}.items():
+                            batch[key].append(value)
+                        steps += 1
+                        sample = {"steps": steps, "episode": episode + 1, "episode_step": info["step"],
+                            "episode_length": config.scenario.horizon, "simulated_seconds": info["simulated_seconds"],
+                            "total_simulated_seconds": steps * config.scenario.delta_t,
+                            "mean_coverage": info["coverage"]["mean"], "p10": info["coverage"]["p10"],
+                            "fairness": info["coverage"]["fairness"], "mean_step_reward": float(individual[:count].mean()),
+                            "energy_Wh": energies[-1], "crashed_uavs": info["crashed_uavs"],
+                            "collision_pairs": len(info["collision_pairs"])}
+                    with timings.measure("logging"):
+                        for j, uav in enumerate(env.uavs):
+                            uav_writer.writerow({"training_step": steps, "environment": 0,
+                                "episode": episode, "episode_step": info["step"], "uav_id": j + 1,
+                                "inventory_index": uav.inventory_index + 1, "name": uav.spec.name,
+                                "reward": float(individual[j]), **info["uav_reward_terms"][j],
+                                "energy_Wh": info["energy_Wh"][j], "actor_executed": info["actor_training_mask"][j],
+                                "battery_ratio": uav.battery / uav.spec.battery_capacity_Wh,
+                                "simulated_seconds": info["simulated_seconds"]})
+                        step_writer.writerow(sample)
+                        now = time.perf_counter()
+                        if now - last_flush_at >= 1:
+                            uav_file.flush()
+                            step_file.flush()
+                            last_flush_at = now
+                    if callback:
+                        with timings.measure("telemetry"):
+                            latest_telemetry = env.telemetry()
+                            frame = {}
+                            if now - last_frame_at >= 1 or term or trunc or steps == cfg.total_steps:
+                                frame = {"frame": env.frame(), "frame_step": steps}
+                                last_frame_at = now
+                                last_frame_step = steps
+                            publish("collecting", sample=sample, telemetry=latest_telemetry, **frame)
+                    # Publish the final transition before reset, preserving its metrics and UAV readings.
                     if term or trunc:
                         completed_returns.extend(episode_returns[:count].tolist())
                         episode_returns.fill(0)
                         episode += 1
-                        next_obs, _ = env.reset()
-                    coverage_means.append(info["coverage"]["mean"])
-                    energies.append(sum(info["energy_Wh"]))
-                    reward_components.extend(info["uav_reward_terms"][:count])
-                    for key, value in {"obs": obs, "latent": latent.cpu().numpy(),
-                                       "log_prob": probabilities.cpu().numpy(), "values": values.cpu().numpy(),
-                                       "next_values": next_values, "rewards": individual[None, :], "terminated": [term],
-                                       "ended": [term or trunc], "masks": [info["actor_training_mask"]],
-                                       "value_masks": obs["active_mask"]}.items():
-                        batch[key].append(value)
+                        with timings.measure("reset"):
+                            next_obs, _ = env.reset()
                     observation = next_obs
-                    steps += 1
                 if not batch["rewards"]:
                     break
-                arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key != "obs"}
-                advantage, returns = generalized_advantage(arrays["rewards"], arrays["values"], arrays["next_values"],
-                    arrays["terminated"], arrays["ended"], cfg.gamma, cfg.gae_lambda)
-                def flatten(a):
-                    return a.reshape(-1, *a.shape[2:])
-                obs = {key: np.concatenate([item[key] for item in batch["obs"]]) for key in obs}
-                stats = update(model, optimizer, obs, flatten(arrays["latent"]),
-                    flatten(arrays["log_prob"]), flatten(arrays["values"]), flatten(advantage),
-                    flatten(returns), flatten(arrays["masks"]), flatten(arrays["value_masks"]), cfg, device, rng)
+                publish("updating")
+                with timings.measure("update", gpu=True):
+                    arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key != "obs"}
+                    advantage, returns = generalized_advantage(arrays["rewards"], arrays["values"], arrays["next_values"],
+                        arrays["terminated"], arrays["ended"], cfg.gamma, cfg.gae_lambda)
+                    def flatten(a):
+                        return a.reshape(-1, *a.shape[2:])
+                    obs = {key: np.concatenate([item[key] for item in batch["obs"]]) for key in obs}
+                    stats = update(model, optimizer, obs, flatten(arrays["latent"]),
+                        flatten(arrays["log_prob"]), flatten(arrays["values"]), flatten(advantage),
+                        flatten(returns), flatten(arrays["masks"]), flatten(arrays["value_masks"]), cfg, device, rng)
                 elapsed = time.perf_counter() - started
                 update_index += 1
                 stats.update({"steps": steps, "update": update_index, "elapsed_seconds": elapsed,
@@ -177,17 +251,24 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                                                  (np.var(returns[arrays["value_masks"] > 0]) + 1e-8))})
                 for key in ("coverage", "energy", "projection", "collision", "crash"):
                     stats[f"reward_{key}"] = float(np.mean([terms[key] for terms in reward_components]))
-                if writer is None:
-                    writer = csv.DictWriter(csv_file, fieldnames=list(stats))
-                    writer.writeheader()
-                writer.writerow(stats)
-                csv_file.flush()
-                uav_file.flush()
+                with timings.measure("logging"):
+                    if writer is None:
+                        writer = csv.DictWriter(csv_file, fieldnames=list(stats))
+                        writer.writeheader()
+                    writer.writerow(stats)
+                    csv_file.flush()
+                    uav_file.flush()
+                    step_file.flush()
                 summary.update(steps=steps, agent_steps=agent_steps, metrics=stats)
+                publish("updating", metrics=stats)
                 evaluation = None
                 if steps >= next_evaluation and not stop_event.is_set():
-                    evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes,
-                                          seed=cfg.seed + 10000, device=device, stop_event=stop_event, include_frame=True)
+                    publish("evaluating", evaluation_progress=None)
+                    with timings.measure("evaluation", gpu=True):
+                        evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes,
+                            seed=cfg.seed + 10000, device=device, stop_event=stop_event,
+                            callback=(lambda progress: publish("evaluating", evaluation_progress=progress))
+                            if callback else None)
                     if evaluation.get("episodes", 0):
                         clean = {key: value for key, value in evaluation.items() if key != "frame"}
                         summary["evaluation"] = clean
@@ -199,14 +280,20 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 if steps >= next_checkpoint:
                     checkpoint(f"checkpoint-{steps}.pt")
                     next_checkpoint += cfg.checkpoint_frequency
-                save_json(directory / "summary.json", summary)
-                if callback:
-                    callback({"run_id": run_id, "steps": steps, "total_steps": cfg.total_steps,
-                              "metrics": stats, "evaluation": evaluation, "frame": env.frame()})
+                summary["timings"] = timings.snapshot()
+                with timings.measure("logging"):
+                    save_json(directory / "summary.json", summary)
+                    log_timings()
+                publish("collecting", evaluation=evaluation)
+            if callback and last_frame_step != steps:
+                with timings.measure("telemetry"):
+                    publish("checkpointing", frame=env.frame(), frame_step=steps)
             checkpoint("final.pt")
             if not (directory / "best.pt").exists():
                 checkpoint("best.pt")
+            log_timings()
         summary["status"] = "stopped" if stop_event.is_set() else "completed"
+        publish(summary["status"])
     except Exception as error:
         summary.update(status="failed", error=str(error))
         if model is not None:
@@ -214,7 +301,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         raise
     finally:
         summary.update(steps=steps, agent_steps=agent_steps, elapsed_seconds=time.perf_counter() - started,
-                       finished_utc=datetime.now(timezone.utc).isoformat())
+                       finished_utc=datetime.now(timezone.utc).isoformat(), timings=timings.snapshot())
         save_json(directory / "summary.json", summary)
         env.close()
     return directory, summary

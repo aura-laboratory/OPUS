@@ -20,7 +20,7 @@ def heuristic_action(env):
 
 
 def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
-             stop_event=None, include_frame=False):
+             stop_event=None, include_frame=False, callback=None):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
@@ -45,6 +45,9 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
                 with torch.no_grad():
                     action = model.act(packed, deterministic=True)[0][0].cpu().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
+            if callback:
+                callback({"episode": episode + 1, "episodes": episodes, "step": info["step"],
+                          "episode_length": scenario.horizon})
             total += reward
             individual_returns += info["uav_rewards"]
             averages.append(info["coverage"]["mean"])

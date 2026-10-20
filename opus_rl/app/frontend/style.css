@@ -58,3 +58,14 @@ button[aria-pressed]:active{box-shadow:inset 0 3px 6px #08120d88;transform:trans
 .reward-equation math{font-size:15px;margin:8px 0;color:#eed2a9}
 .reward-equation p{font-size:10px;line-height:1.6;margin:10px 0 0}
 #training-diagnostics>p{margin:10px 0 0}
+.simulation-bar .replay-controls{display:flex;align-items:center;gap:10px;margin:0;min-width:0;flex-wrap:wrap;justify-content:flex-end}
+.simulation-bar #episode-counter{min-width:0;margin-right:0;font-variant-numeric:tabular-nums}
+#training-phase:empty{display:none}
+[data-reading-help],[data-help]{cursor:help}
+#timing-diagnostics table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px;font-variant-numeric:tabular-nums}
+#timing-diagnostics th,#timing-diagnostics td{padding:6px 3px;border-bottom:1px solid #304352;text-align:right;font-weight:400}
+#timing-diagnostics th:first-child,#timing-diagnostics td:first-child{text-align:left}
+#timing-diagnostics th{color:#a9bac8}#timing-diagnostics td{color:#eed2a9}
+#timing-diagnostics tr.subphase td:first-child{padding-left:12px;color:#a9bac8}
+#timing-diagnostics p{font-size:11px;margin-bottom:0}
+#loaded-model{max-width:250px;overflow-wrap:anywhere}

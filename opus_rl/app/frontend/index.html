@@ -44,29 +44,37 @@
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="energy_weight">0.2</mn><msub><mi>e</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="projection_weight">0.1</mn><msub><mi>p</mi><mi>i</mi></msub></mtd></mtr>
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="collision_weight">0.3</mn><msub><mi>c</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="crash_weight">0.4</mn><msub><mi>x</mi><mi>i</mi></msub></mtd></mtr>
         </mtable></math>
-        <p class="muted">μ: mean · J: fairness · P₁₀: lowest 10%<br>e: energy · p: correction · c: collision · x: crash</p>
+        <p class="muted">μ: mean · J: fairness · P₁₀: 10th percentile<br>e: energy · p: correction · c: collision · x: crash</p>
       </div>
     </details>
     <div id="training-progress" class="group"><h2>Progress</h2><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p>
       <div class="toolbar"><button id="start-training" class="primary">Start training</button><button id="stop-training">Stop &amp; save</button></div>
     </div>
     <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"><p class="muted">Available after the first rollout.</p></div></details>
+    <details class="group"><summary>Processing time</summary><div id="timing-diagnostics"><p class="muted">Available during training.</p></div></details>
   </section>
   <section id="runs-controls" hidden>
     <div class="group"><h2>Saved runs <button id="refresh-runs" class="text-button">Refresh</button></h2><div id="run-list"></div></div>
   </section>
 </aside>
 <div class="workspace">
-  <div class="map-toolbar"><form id="search-form"><label class="sr-only" for="place-search">Find a place</label><input id="place-search" placeholder="Find a place…" minlength="2"><button type="submit">Search</button></form>
+  <div class="map-toolbar" data-tabs="mission"><form id="search-form"><label class="sr-only" for="place-search">Find a place</label><input id="place-search" placeholder="Find a place…" minlength="2"><button type="submit">Search</button></form>
     <div id="search-results"></div><span id="map-mode"></span></div>
   <div id="map" role="region" aria-label="Mission map"></div>
   <div id="map-fallback" hidden>Map unavailable.</div>
-  <div class="simulation-bar"><div><span class="eyebrow">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
-    <label class="sr-only" for="simulation-policy">Simulation policy</label><select id="simulation-policy"><option value="heuristic">Sweep baseline</option><option value="random">Random actions</option><option value="model">Loaded model</option></select>
-    <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button></div>
-  <div class="metrics"><div><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div><span>Lowest 10%</span><strong id="metric-p10">0.000</strong></div><div><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
+  <p id="runs-placeholder" class="muted" hidden>Select a saved run to replay or evaluate.</p>
+  <div class="simulation-bar" id="simulation-bar"><div data-reading-help="simulation_time"><span class="eyebrow" id="simulation-label">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
+    <div id="episode-counter" class="muted" data-tabs="training" data-reading-help="episode_counter" hidden></div>
+    <div class="replay-controls" id="simulation-controls" data-tabs="mission runs">
+      <label class="sr-only" for="simulation-policy">Preview policy</label><select id="simulation-policy" data-tabs="mission"><option value="heuristic">Sweep baseline</option><option value="random">Random actions</option></select>
+      <span id="loaded-model" class="muted" data-tabs="runs" hidden></span>
+      <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button>
+    </div>
+  </div>
+  <div id="training-phase" class="muted" data-tabs="training" hidden></div>
+  <div class="metrics" id="live-metrics"><div data-reading-help="mean_quality"><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div data-reading-help="p10_quality"><span>10th percentile</span><strong id="metric-p10">0.000</strong></div><div data-reading-help="spatial_fairness"><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div data-reading-help="live_reward"><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
   <div id="safety-metrics" class="muted"></div>
-  <div id="charts" hidden><div class="chart-card"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage by training step"></canvas></div><div class="chart-card"><h2>Mean UAV reward</h2><canvas id="reward-chart" aria-label="Mean UAV reward by training step"></canvas></div></div>
+  <div id="charts" data-tabs="training" hidden><div class="chart-card" data-reading-help="coverage_plot"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage at each training step"></canvas></div><div class="chart-card" data-reading-help="reward_plot"><h2>Mean UAV reward</h2><canvas id="reward-chart" aria-label="Mean UAV reward at each training step"></canvas></div></div>
   <div id="fleet-status" class="fleet-strip"></div>
 </div>
 </main>
