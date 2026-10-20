@@ -21,7 +21,7 @@ def heuristic_action(env):
 
 def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy="model", device="cpu",
              stop_event=None, include_frame=False):
-    totals, coverages, energy, collisions, crashes, frames = [], [], [], [], [], []
+    totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
             break
@@ -29,6 +29,7 @@ def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy=
         observation, info = env.reset(seed=seed + episode)
         env.action_space.seed(seed + episode)
         total = energy_used = collision_count = 0
+        individual_returns = np.zeros(env.n_max)
         averages = []
         for _ in range(min(horizon or scenario.horizon, scenario.horizon)):
             if stop_event and stop_event.is_set():
@@ -45,12 +46,16 @@ def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy=
                     action = model.act(packed, deterministic=True)[0][0].cpu().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
             total += reward
+            individual_returns += info["uav_rewards"]
             averages.append(info["coverage"]["mean"])
             energy_used += sum(info["energy_Wh"])
             collision_count += len(info["collision_pairs"])
             if terminated or truncated:
                 break
         totals.append(total)
+        uav_returns.append({"seed": seed + episode, "uavs": [
+            {"id": j, "inventory_index": uav.inventory_index, "name": uav.spec.name,
+             "return": float(individual_returns[j])} for j, uav in enumerate(env.uavs)]})
         coverages.append([float(np.mean(averages)) if averages else 0, info["coverage"]["p10"],
                           info["coverage"]["fairness"]])
         energy.append(energy_used)
@@ -66,6 +71,7 @@ def evaluate(scenario, model=None, episodes=2, horizon=None, seed=10000, policy=
               "p10_final": float(np.mean(coverages, axis=0)[1]),
               "fairness_final": float(np.mean(coverages, axis=0)[2]), "energy_Wh": float(np.mean(energy)),
               "collision_count": float(np.mean(collisions)), "crashed_uavs": float(np.mean(crashes)),
+              "reward_mode": scenario.reward_mode, "uav_returns": uav_returns,
               "seeds": [seed + i for i in range(len(totals))]}
     if frames:
         result["frame"] = frames[0]

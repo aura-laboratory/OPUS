@@ -108,8 +108,10 @@ def test_battery_depletion_and_persistent_crash_penalty():
     assert not terminal
     assert env.uavs[0].status == "crashed"
     assert info["reward_terms"]["crash"] == 0.5
+    assert [item["crash"] for item in info["uav_reward_terms"]] == [1, 0]
     _, _, _, _, next_info = env.step(np.zeros((2, 5)))
     assert next_info["reward_terms"]["crash"] == 0.5
+    assert [item["crash"] for item in next_info["uav_reward_terms"]] == [1, 0]
     env._crash(1)
     assert env.step(np.zeros((2, 5)))[2]
 
@@ -165,3 +167,49 @@ def test_fixed_mode_ignores_unused_sampling_bounds():
     assert len(env.uavs) == 2 and len(env.stations) == 2
     with pytest.raises(ValueError, match="Variable count bounds"):
         ScenarioConfig.model_validate({**cfg.model_dump(), "fleet_mode": "variable"})
+
+
+def test_individual_capture_credit_padding_and_info_ownership(monkeypatch):
+    from opus_rl.configs.models import RewardConfig
+    from opus_rl.envs import team_env
+
+    cfg = small_config(uav_types=[UAVType(available_count=3, fixed_count=2)], reward=RewardConfig(
+        mean_weight=1, fairness_weight=0, p10_weight=0, energy_weight=0, projection_weight=0,
+        collision_weight=0, crash_weight=0))
+    env = OpusTeamEnv(cfg)
+    env.reset(seed=3)
+    captures = np.zeros((2, 64, 64), np.float32)
+    captures[0, :, :32] = 0.8
+    captures[1, :, 16:] = 0.4
+
+    def capture(area, uav, gsd):
+        return captures[uav.inventory_index].copy(), np.zeros_like(area.x), {
+            "valid_cells": 0, "invalid_gsd_cells": 0, "mean_gsd": 0, "mean_incidence_deg": 0}
+
+    monkeypatch.setattr(team_env, "scan", capture)
+    _, scalar, _, _, info = env.step(np.zeros((3, 5)))
+    assert info["uav_rewards"] == pytest.approx([0.03, 0.02, 0])
+    assert scalar == pytest.approx(0.025)
+    assert [u["reward"] for u in env.frame()["uavs"]] == pytest.approx([0.03, 0.02])
+    captures[0].fill(0)
+    _, _, _, _, next_info = env.step(np.zeros((3, 5)))
+    assert next_info["uav_rewards"][0] == 0  # Neither old coverage nor the teammate earns this UAV credit.
+    assert next_info["uav_rewards"][1] > 0
+    assert info["uav_reward_terms"][0]["coverage"] == pytest.approx(0.03)
+    captures[0] = captures[1]
+    _, _, _, _, duplicate = env.step(np.zeros((3, 5)))
+    assert duplicate["uav_rewards"] == [0, 0, 0]  # Each equal-quality capture is redundant.
+
+
+def test_collision_costs_only_reach_the_uavs_involved():
+    cfg = small_config(uav_types=[UAVType(available_count=3, fixed_count=3)],
+                       uav_launch_docks=[0, 0, 1])
+    env = OpusTeamEnv(cfg)
+    env.reset(seed=1)
+    for uav in env.uavs:
+        uav.status, uav.station = "coverage", None
+        uav.position[2] = 20
+    _, _, _, _, info = env.step(np.zeros((3, 5)))
+    assert info["collision_pairs"] == [[0, 1]]
+    assert [item["collision"] for item in info["uav_reward_terms"]] == [1, 1, 0]
+    assert [item["crash"] for item in info["uav_reward_terms"]] == [1, 1, 0]

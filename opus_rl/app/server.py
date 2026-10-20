@@ -85,6 +85,7 @@ def create_app(runs_root=None):
     @app.get("/api/health")
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
+                "training_algorithm": "ippo",
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -146,6 +147,7 @@ def create_app(runs_root=None):
             if state.worker and state.worker.is_alive():
                 raise HTTPException(409, "An experiment is already running.")
             # Validate all geometry and inventory before creating a background job.
+            config.scenario.reward_mode = "individual"
             env = OpusTeamEnv(config.scenario)
             env.reset(seed=config.training.seed)
             approximate_bytes = config.training.rollout_steps * config.training.num_envs * (
@@ -226,7 +228,8 @@ def create_app(runs_root=None):
             raise HTTPException(400, "Choose 1–100 evaluation episodes.")
         model, config, _ = load_checkpoint(directory / filename)
         scenario = ScenarioConfig.model_validate(body["scenario"]) if "scenario" in body else config.scenario
-        if sum(t.available_count for t in scenario.station_types) != model.station_slots:
+        scenario.reward_mode = config.scenario.reward_mode
+        if model.algorithm == "mappo" and sum(t.available_count for t in scenario.station_types) != model.station_slots:
             raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
         result = evaluate(scenario, model, episodes, seed=config.training.seed + 10000,
                           include_frame=True)

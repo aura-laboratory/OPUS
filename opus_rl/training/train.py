@@ -14,7 +14,9 @@ import torch
 from opus_rl import __version__
 from opus_rl.configs import ExperimentConfig
 from opus_rl.envs import OpusTeamEnv
-from opus_rl.marl.network import MODEL_INIT_LOCK, ActorCritic, pack_observation, stack_dict, tensor_dict
+from opus_rl.marl.network import (
+    MODEL_INIT_LOCK, ActorCritic, LegacyActorCritic, pack_observation, stack_dict, tensor_dict,
+)
 from opus_rl.marl.ppo import generalized_advantage, update
 from .evaluate import evaluate
 
@@ -36,14 +38,21 @@ def git_version():
 def load_checkpoint(path, device="cpu"):
     data = torch.load(path, map_location=device, weights_only=False)  # Only load local, trusted OPUS checkpoints.
     config = ExperimentConfig.model_validate(data["config"])
+    algorithm = data.get("algorithm", "mappo")
+    if algorithm not in ("ippo", "mappo"):
+        raise ValueError(f"Unsupported checkpoint algorithm: {algorithm}.")
+    config.scenario.reward_mode = "individual" if algorithm == "ippo" else "legacy_team"
     with MODEL_INIT_LOCK, torch.random.fork_rng(devices=[]):
-        model = ActorCritic(sum(t.available_count for t in config.scenario.station_types), config.training.hidden_size)
+        model = (ActorCritic(config.training.hidden_size) if algorithm == "ippo" else LegacyActorCritic(
+            sum(t.available_count for t in config.scenario.station_types), config.training.hidden_size))
     model.load_state_dict(data["model"])
     model.to(device).eval()
     return model, config, data
 
 
 def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=None, output_name=None):
+    config = config.model_copy(deep=True)
+    config.scenario.reward_mode = "individual"  # New runs always use IPPO, including from legacy run configs.
     cfg = config.training
     stop_event = stop_event or threading.Event()
     run_id = output_name or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
@@ -53,6 +62,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     directory.mkdir(parents=True, exist_ok=False)
     save_json(directory / "config.json", config.model_dump())
     save_json(directory / "normalization.json", {"method": "fixed physical feature scales; no running statistics",
+               "algorithm": "parameter-sharing IPPO", "value": "one local value estimate per UAV observation",
+               "reward": "signed marginal capture contribution minus individual costs",
                "map": "occupancy fraction, mean and p10 quality", "actions": "tanh Gaussian in [-1,1]",
                "map_buffer_dtype": "float16, encoded once per environment per transition"})
     torch.set_num_threads(cfg.torch_threads)
@@ -64,13 +75,18 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     observations = [env.reset(seed=cfg.seed + i)[0] for i, env in enumerate(envs)]
     with MODEL_INIT_LOCK, torch.random.fork_rng(devices=[]):
         torch.manual_seed(cfg.seed)
-        model = ActorCritic(envs[0].s_max, cfg.hidden_size).to(device)
+        model = ActorCritic(cfg.hidden_size).to(device)
     action_rng = torch.Generator(device=device).manual_seed(cfg.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, eps=1e-5)
     started = time.perf_counter()
     steps, update_index, next_evaluation, next_checkpoint = 0, 0, cfg.evaluation_frequency, cfg.checkpoint_frequency
-    best_return, episode_returns = -np.inf, np.zeros(cfg.num_envs)
+    best_return = -np.inf
+    episode_returns = np.zeros((cfg.num_envs, envs[0].n_max))
+    episodes = np.zeros(cfg.num_envs, np.int64)
+    agent_steps = 0
     summary = {"run_id": run_id, "status": "running", "steps": 0, "version": __version__,
+               "agent_steps": 0,
+               "algorithm": "ippo", "reward_mode": "individual",
                "git_commit": git_version(), "seed": cfg.seed, "device": device,
                "started_utc": datetime.now(timezone.utc).isoformat(), "evaluation": None}
     save_json(directory / "summary.json", summary)
@@ -80,81 +96,94 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         temporary = target.with_suffix(".tmp")
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                     "config": config.model_dump(), "steps": steps, "version": __version__,
+                    "agent_steps": agent_steps,
+                    "algorithm": "ippo", "checkpoint_format": 2,
                     "git_commit": summary["git_commit"], "torch_rng": action_rng.get_state(),
                     "numpy_rng": rng.bit_generator.state}, temporary)
         temporary.replace(target)
 
     def collect(pair):
         env, action = pair
-        obs, r, terminal, truncation, info = env.step(action)
-        return obs, r, terminal, truncation, info, env.central_state(obs)
+        return env.step(action)
 
     try:
         checkpoint("initial.pt")
         with ThreadPoolExecutor(max_workers=cfg.num_envs) as pool, (directory / "metrics.csv").open(
             "w", newline="", encoding="utf8"
-        ) as csv_file:
+        ) as csv_file, (directory / "uav-rewards.csv").open("w", newline="", encoding="utf8") as uav_file:
             writer = None
+            uav_writer = csv.DictWriter(uav_file, fieldnames=["training_step", "environment", "episode", "episode_step",
+                "uav_id", "inventory_index", "name", "reward", "coverage", "energy", "projection", "collision",
+                "crash", "energy_Wh", "actor_executed"])
+            uav_writer.writeheader()
             while steps < cfg.total_steps and not stop_event.is_set():
-                batch = {k: [] for k in ("obs", "central", "latent", "log_prob", "values", "next_values",
-                                        "rewards", "terminated", "ended", "masks")}
+                batch = {k: [] for k in ("obs", "latent", "log_prob", "values", "next_values",
+                                        "rewards", "terminated", "ended", "masks", "value_masks")}
                 coverage_means, energies, completed_returns, reward_components = [], [], [], []
                 for _ in range(min(cfg.rollout_steps, (cfg.total_steps - steps + cfg.num_envs - 1) // cfg.num_envs)):
                     if stop_event.is_set():
                         break
                     obs = stack_dict([pack_observation(o) for o in observations])
-                    central = stack_dict([env.central_state(o) for env, o in zip(envs, observations)])
-                    central["map"] = obs["map"]
                     actions, latent, probabilities, values = model.act(
-                        tensor_dict(obs, device), tensor_dict(central, device), generator=action_rng
+                        tensor_dict(obs, device), generator=action_rng
                     )
                     transitions = list(pool.map(collect, zip(envs, actions.cpu().numpy())))
                     new_obs, rewards, terminal, ended, masks = [], [], [], [], []
-                    next_central = stack_dict([transition[5] for transition in transitions])
+                    next_observation = stack_dict([pack_observation(transition[0]) for transition in transitions])
                     with torch.no_grad():
-                        next_values = model.value(tensor_dict(next_central, device)).cpu().numpy()
-                    for i, (observation, r, term, trunc, info, _) in enumerate(transitions):
-                        episode_returns[i] += r
+                        next_values = model.value(tensor_dict(next_observation, device)).cpu().numpy()
+                    for i, (observation, _, term, trunc, info) in enumerate(transitions):
+                        individual = np.asarray(info["uav_rewards"], np.float32)
+                        episode_returns[i] += individual
+                        count = info["active_uavs"]
+                        agent_steps += count
+                        for j, uav in enumerate(envs[i].uavs):
+                            uav_writer.writerow({"training_step": steps + i + 1, "environment": i,
+                                "episode": int(episodes[i]), "episode_step": info["step"], "uav_id": j + 1,
+                                "inventory_index": uav.inventory_index + 1, "name": uav.spec.name,
+                                "reward": float(individual[j]), **info["uav_reward_terms"][j],
+                                "energy_Wh": info["energy_Wh"][j], "actor_executed": info["actor_training_mask"][j]})
                         if term or trunc:
-                            completed_returns.append(float(episode_returns[i]))
+                            completed_returns.extend(episode_returns[i, :count].tolist())
                             episode_returns[i] = 0
+                            episodes[i] += 1
                             observation = envs[i].reset()[0]
                         new_obs.append(observation)
-                        rewards.append(r)
+                        rewards.append(individual)
                         terminal.append(term)
                         ended.append(term or trunc)
                         masks.append(info["actor_training_mask"])
                         coverage_means.append(info["coverage"]["mean"])
                         energies.append(sum(info["energy_Wh"]))
-                        reward_components.append(info["reward_terms"])
-                    for key, value in {"obs": obs, "central": central, "latent": latent.cpu().numpy(),
+                        reward_components.extend(info["uav_reward_terms"][:count])
+                    for key, value in {"obs": obs, "latent": latent.cpu().numpy(),
                                        "log_prob": probabilities.cpu().numpy(), "values": values.cpu().numpy(),
                                        "next_values": next_values, "rewards": rewards, "terminated": terminal,
-                                       "ended": ended, "masks": masks}.items():
+                                       "ended": ended, "masks": masks, "value_masks": obs["active_mask"]}.items():
                         batch[key].append(value)
                     observations = new_obs
                     steps += cfg.num_envs
                 if not batch["rewards"]:
                     break
-                arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key not in ("obs", "central")}
+                arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key != "obs"}
                 advantage, returns = generalized_advantage(arrays["rewards"], arrays["values"], arrays["next_values"],
                     arrays["terminated"], arrays["ended"], cfg.gamma, cfg.gae_lambda)
                 def flatten(a):
                     return a.reshape(-1, *a.shape[2:])
                 obs = {key: np.concatenate([item[key] for item in batch["obs"]]) for key in obs}
-                central = {key: np.concatenate([item[key] for item in batch["central"]]) for key in central}
-                stats = update(model, optimizer, obs, central, flatten(arrays["latent"]),
+                stats = update(model, optimizer, obs, flatten(arrays["latent"]),
                     flatten(arrays["log_prob"]), flatten(arrays["values"]), flatten(advantage),
-                    flatten(returns), flatten(arrays["masks"]), cfg, device, rng)
+                    flatten(returns), flatten(arrays["masks"]), flatten(arrays["value_masks"]), cfg, device, rng)
                 elapsed = time.perf_counter() - started
                 update_index += 1
                 stats.update({"steps": steps, "update": update_index, "elapsed_seconds": elapsed,
-                    "steps_per_second": steps / max(elapsed, 1e-6), "mean_step_reward": float(arrays["rewards"].mean()),
+                    "agent_steps": agent_steps, "steps_per_second": steps / max(elapsed, 1e-6),
+                    "mean_step_reward": float(arrays["rewards"][arrays["value_masks"] > 0].mean()),
                     "mean_coverage": float(np.mean(coverage_means)), "energy_Wh_per_step": float(np.mean(energies)),
                     "mean_episode_return": float(np.mean(completed_returns)) if completed_returns else 0,
-                    "actor_sample_fraction": float(arrays["masks"].mean()),
-                    "explained_variance": float(1 - np.var(flatten(returns) - flatten(arrays["values"])) /
-                                                 (np.var(flatten(returns)) + 1e-8))})
+                    "actor_sample_fraction": float(arrays["masks"].sum() / arrays["value_masks"].sum()),
+                    "explained_variance": float(1 - np.var((returns - arrays["values"])[arrays["value_masks"] > 0]) /
+                                                 (np.var(returns[arrays["value_masks"] > 0]) + 1e-8))})
                 for key in ("coverage", "energy", "projection", "collision", "crash"):
                     stats[f"reward_{key}"] = float(np.mean([terms[key] for terms in reward_components]))
                 if writer is None:
@@ -162,7 +191,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                     writer.writeheader()
                 writer.writerow(stats)
                 csv_file.flush()
-                summary.update(steps=steps, metrics=stats)
+                uav_file.flush()
+                summary.update(steps=steps, agent_steps=agent_steps, metrics=stats)
                 evaluation = None
                 if steps >= next_evaluation and not stop_event.is_set():
                     evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes, cfg.evaluation_horizon,
@@ -192,7 +222,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
             checkpoint("interrupted.pt")
         raise
     finally:
-        summary.update(steps=steps, elapsed_seconds=time.perf_counter() - started,
+        summary.update(steps=steps, agent_steps=agent_steps, elapsed_seconds=time.perf_counter() - started,
                        finished_utc=datetime.now(timezone.utc).isoformat())
         save_json(directory / "summary.json", summary)
         for env in envs:

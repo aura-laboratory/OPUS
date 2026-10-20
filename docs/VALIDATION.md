@@ -4,7 +4,7 @@ Validated locally on 2026-10-09, using Python 3.11.17 and CPU PyTorch 2.14.1, on
 
 ## Automated checks
 
-**29 tests pass** as of 2026-10-19. Ruff and JavaScript syntax checks pass. The suite covers:
+**39 tests pass** as of 2026-10-20. Ruff and JavaScript syntax checks pass. The suite covers:
 
 - Gymnasium signatures, spaces, deterministic resets, observation ownership and vector environments.
 - Fixed/variable typed inventory, padding and count limits.
@@ -18,6 +18,8 @@ Validated locally on 2026-10-09, using Python 3.11.17 and CPU PyTorch 2.14.1, on
 The test run emits one upstream Starlette/httpx deprecation warning. It does not affect these checks.
 
 ## Actual learning comparison
+
+This is the original MAPPO/team-reward benchmark, retained for historical comparison. It does not establish learning performance for the subsequent IPPO/individual-reward implementation.
 
 Run `20261009-160155-7747c6` used `configs/learning-smoke.json`: one UAV, one dock, a fixed 40 × 40 m area, a 64² coverage grid, a 16² observation grid, 64-decision episodes, and 8,192 training team steps. The agreed reward weights, ΔT=5 s and λ=0.9 were retained. Training took **96.0 seconds**, including scheduled evaluation. Three comparison episodes used seeds 20000–20002 and the same scenario for every policy.
 
@@ -73,6 +75,14 @@ The shared section frames, nested cards, heading gaps, and input spacing were vi
 The starter footprint was checked against the waterfront part of Aristotelous Square. The API verifies that it contains the square's center and both launch docks. All 27 non-training tests pass; the three training tests were excluded from this check. Ruff and JavaScript syntax checks pass.
 
 Browser checks on the existing local server verified green, inset pressed states for Draw area and Place docks, toggling either mode off, switching between tools, restoring the original polygon after cancelling an unfinished drawing, and entering dock placement after closing a polygon. No server or training job was launched. Reward and MAPPO code are unchanged.
+
+## Parameter-sharing IPPO: 2026-10-20
+
+New runs use individual capture-difference rewards, local per-UAV values and separate GAE/return targets. Checks cover exact counterfactuals with history and overlap, redundant/tied captures, negative fairness contributions, individual collision/crash costs, per-slot reward ownership, and exclusion of padded slots from policy/value losses. A PPO check supplies opposing UAV advantages and verifies opposing updates.
+
+Bounded API tests complete 32 team steps with separate and shared launch docks, then reload, evaluate and export the IPPO model and individual reward CSV. The privileged-state accessor is disabled during these tests. A two-environment sampled-fleet test crosses episode resets with different active fleet sizes, verifies agent counts and recorded reward averages, and replaces the Gymnasium scalar reward with an unrelated large value to ensure it cannot enter learner targets.
+
+The original saved MAPPO best model still evaluates to return **40.82751992640401** and mean coverage **0.6439687173697166** in legacy team-reward mode. New checkpoints identify IPPO and individual reward semantics explicitly. There has been no new long learning study; historical team-return values cannot be compared directly to the new individual returns. No application server was launched or restarted for this revision.
 
 ## Remaining research limits
 

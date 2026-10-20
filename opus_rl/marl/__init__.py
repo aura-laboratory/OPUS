@@ -1,1 +1,1 @@
-"""Shared actor, privileged team critic and masked MAPPO updates."""
+"""Parameter-sharing IPPO with individual UAV value estimates and advantages."""

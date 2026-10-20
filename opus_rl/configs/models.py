@@ -125,6 +125,7 @@ class ScenarioConfig(Config):
     grid_size: int = Field(1024, ge=16, le=2048)
     observation_size: int = Field(128, ge=8, le=256)
     reward: RewardConfig = Field(default_factory=RewardConfig)
+    reward_mode: Literal["individual", "legacy_team"] = "individual"
 
     @model_validator(mode="after")
     def consistent(self):

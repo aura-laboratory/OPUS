@@ -1,7 +1,9 @@
 import io
+import csv
 import json
 import time
 import zipfile
+from statistics import mean
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from shapely.geometry import Point, Polygon
 from opus_rl.app.server import create_app
 from opus_rl.configs import ExperimentConfig
 from opus_rl.configs.models import TrainConfig
+from opus_rl.envs import OpusTeamEnv
 from test_environment import small_config
 
 
@@ -24,6 +27,7 @@ def experiment():
 def test_local_app_simulation_and_invalid_configuration(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         assert client.get('/api/health').json()['local_only']
+        assert client.get('/api/health').json()['training_algorithm'] == 'ippo'
         assert client.get('/').status_code == 200
         defaults = client.get('/api/defaults').json()['config']
         assert defaults['scenario']['coverage_lambda'] == 0.9
@@ -32,6 +36,9 @@ def test_local_app_simulation_and_invalid_configuration(tmp_path):
         assert client.post('/api/simulation/reset', json=configuration).status_code == 200
         frame = client.post('/api/simulation/step', json={'policy':'heuristic'}).json()
         assert frame['info']['simulated_seconds'] == 5
+        assert frame['info']['reward_mode'] == 'individual'
+        assert len(frame['info']['uav_rewards']) == 2
+        assert frame['info']['reward'] == pytest.approx(mean(frame['info']['uav_rewards']))
         configuration['scenario']['min_altitude_m'] = 200
         assert client.post('/api/validate', json=configuration).status_code == 422
         assert client.post('/api/training/stop', json={}, headers={'Origin':'https://example.com'}).status_code == 403
@@ -50,10 +57,15 @@ def test_starter_mission_covers_aristotelous_square_with_docks_inside(tmp_path):
 
 
 @pytest.mark.parametrize('shared_dock', [False, True])
-def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock):
+def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock, monkeypatch):
+    def forbidden_privileged_state(*args):
+        raise AssertionError('IPPO must not consume centralized critic state.')
+
+    monkeypatch.setattr(OpusTeamEnv, 'central_state', forbidden_privileged_state)
     with TestClient(create_app(tmp_path)) as client:
         configuration = experiment()
         if shared_dock:
+            configuration['scenario']['reward_mode'] = 'legacy_team'
             configuration['scenario']['station_types'][0].update(available_count=1, fixed_count=1)
             configuration['scenario']['station_positions_xy'] = [[20,20]]
             configuration['scenario']['uav_launch_docks'] = [0,0]
@@ -65,20 +77,34 @@ def test_training_checkpoint_reload_evaluation_and_export(tmp_path, shared_dock)
             time.sleep(0.05)
         assert status['status'] == 'completed', status
         assert status['steps'] == 32
+        assert status['summary']['algorithm'] == 'ippo'
+        assert status['summary']['agent_steps'] == 64
         assert all(0 <= row['actor_sample_fraction'] <= 1 for row in status['history'])
         run = client.get('/api/runs').json()[0]
         assert {'initial.pt','final.pt','best.pt'}.issubset(run['checkpoints'])
         result = client.post(f"/api/runs/{run['run_id']}/load", json={'checkpoint':'best.pt'})
         assert result.status_code == 200
+        assert result.json()['config']['scenario']['reward_mode'] == 'individual'
         frame = client.post('/api/simulation/step', json={'policy':'model'}).json()
         assert frame['info']['step'] == 1
-        evaluation = client.post(f"/api/runs/{run['run_id']}/evaluate",json={'episodes':1})
+        alternate = result.json()['config']['scenario']
+        alternate['reward_mode'] = 'legacy_team'
+        evaluation = client.post(f"/api/runs/{run['run_id']}/evaluate", json={'episodes':1, 'scenario':alternate})
         assert evaluation.status_code == 200
         assert evaluation.json()['episodes'] == 1
+        assert evaluation.json()['reward_mode'] == 'individual'
+        individual_returns = evaluation.json()['uav_returns'][0]['uavs']
+        assert len(individual_returns) == 2
+        assert evaluation.json()['return_mean'] == pytest.approx(mean([u['return'] for u in individual_returns]))
         archive = client.get(f"/api/runs/{run['run_id']}/export")
         with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:
-            assert {'config.json','normalization.json','metrics.csv','summary.json','best.pt'}.issubset(zipped.namelist())
+            assert {'config.json','normalization.json','metrics.csv','uav-rewards.csv','summary.json','best.pt'}.issubset(zipped.namelist())
             assert json.loads(zipped.read('summary.json'))['seed'] == 42
+            rewards = list(csv.DictReader(io.StringIO(zipped.read('uav-rewards.csv').decode())))
+            assert len(rewards) == 64
+            assert {row['inventory_index'] for row in rewards} == {'1', '2'}
+            assert mean([float(row['reward']) for row in rewards[-16:]]) == pytest.approx(
+                status['history'][-1]['mean_step_reward'])
 
 
 def test_invalid_inventory_and_station_types():

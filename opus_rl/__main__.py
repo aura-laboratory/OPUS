@@ -16,7 +16,7 @@ def main():
     serve.add_argument("--runs-root", type=Path)
     configuration = sub.add_parser("config", help="Write the full default experiment configuration")
     configuration.add_argument("--output", type=Path, default=Path("configs/default.json"))
-    training = sub.add_parser("train", help="Train MAPPO using a JSON experiment configuration")
+    training = sub.add_parser("train", help="Train parameter-sharing IPPO using a JSON experiment configuration")
     training.add_argument("--config", type=Path, required=True)
     training.add_argument("--runs-root", type=Path, default=Path("runs"))
     evaluation = sub.add_parser("evaluate", help="Evaluate a local OPUS checkpoint")

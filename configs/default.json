@@ -132,7 +132,8 @@
       "projection_weight": 0.1,
       "collision_weight": 0.3,
       "crash_weight": 0.4
-    }
+    },
+    "reward_mode": "individual"
   },
   "training": {
     "total_steps": 10000,

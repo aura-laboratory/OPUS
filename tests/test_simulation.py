@@ -3,7 +3,7 @@ import pytest
 
 from opus_rl.configs.models import ScenarioConfig, UAVType
 from opus_rl.simulation.camera import intrinsics, observation_quality, scan
-from opus_rl.simulation.coverage import fuse, metrics, reward, update_coverage
+from opus_rl.simulation.coverage import fuse, marginal_coverage, metrics, reward, update_coverage
 from opus_rl.simulation.geometry import Area
 from opus_rl.simulation.motion import AnalyticalBackend, UAV, minimum_separation, stopped_distance
 
@@ -106,3 +106,39 @@ def test_ema_fusion_and_zero_map_reward():
     total, terms = reward(ScenarioConfig().reward, empty, 1, 1, 1, 1)
     assert total == pytest.approx(-1)
     assert all(0 <= v <= 1 for v in terms.values())
+
+
+def test_marginal_capture_matches_removing_each_camera_with_overlap_and_history():
+    rng = np.random.default_rng(9)
+    captures = rng.choice([0, 0.4, 0.8], (3, 16, 16)).astype(np.float32)
+    mask = np.ones((16, 16), bool)
+    mask[:2] = False
+    previous = rng.uniform(0, 0.8, (16, 16)).astype(np.float32)
+    current = update_coverage(previous, captures.max(axis=0), mask, 0.9)
+    full = metrics(current, mask)
+    for order in ([0, 1, 2], [2, 0, 1]):
+        ordered = captures[order]
+        owners = ordered.argmax(axis=0)
+        runner_up = np.sort(ordered, axis=0)[-2]
+        contributions = marginal_coverage(previous, current, runner_up, owners, mask, 0.9, 4)
+        for slot, source in enumerate(order):
+            remaining = np.delete(captures, source, axis=0).max(axis=0)
+            without = metrics(update_coverage(previous, remaining, mask, 0.9), mask)
+            for key in ("mean", "fairness", "p10"):
+                assert contributions[slot][key] == pytest.approx(full[key] - without[key])
+        assert all(value == 0 for value in contributions[3].values())
+
+
+def test_negative_marginal_fairness_is_not_clipped_and_zero_capture_gets_no_credit():
+    previous = np.array([[0.02, 0.02]], np.float32)
+    mask = np.ones_like(previous, bool)
+    captures = np.array([[0.82, 0]], np.float32)
+    current = update_coverage(previous, captures, mask, 0.9)
+    contributions = marginal_coverage(previous, current, np.zeros_like(previous),
+                                     np.array([[0, -1]]), mask, 0.9, 2)
+    total, terms = reward(ScenarioConfig().reward, contributions[0], 0, 0, 0, 0)
+    assert contributions[0]["mean"] > 0
+    assert contributions[0]["fairness"] < 0
+    assert total == pytest.approx(terms["coverage"])
+    assert total < 0
+    assert all(value == 0 for value in contributions[1].values())

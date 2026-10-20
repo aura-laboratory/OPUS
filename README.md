@@ -1,6 +1,6 @@
 # OPUS v1
 
-Local research application for persistent multi-UAV area scanning. It combines a Gymnasium team environment, analytical motion/energy/camera models, a deterministic recharge scheduler, a shared MAPPO actor, a centralized critic, and a browser dashboard.
+Local research application for persistent multi-UAV area scanning. It combines a Gymnasium environment, analytical motion/energy/camera models, a deterministic recharge scheduler, parameter-sharing IPPO with individual UAV rewards, and a browser dashboard.
 
 ![OPUS mission dashboard with shared launch dock](docs/dashboard.jpg)
 
@@ -45,6 +45,8 @@ The starter mission covers the waterfront part of Aristotelous Square in Thessal
 3. Choose **Validate mission**. **Reset**, **Step**, and **Play** show a sweep baseline, random actions, or a loaded model. These controls do not train the actor.
 4. In **Training**, set **Step time interval ΔT**, **Episode steps**, the training budget, environment count, PPO parameters, reward weights, evaluation and checkpoint intervals, and seed. **Start training** starts a local background job. **Stop & save** finishes the current calculation and writes a final checkpoint. Grid settings are in **Mission → Area of interest**.
 5. **Runs** lists saved experiments. Select a checkpoint, replay it, run repeatable evaluation, or export a ZIP containing model/configuration/normalization/metrics/evaluation files.
+
+Every UAV uses the same policy and local value function, with its own reward, return and advantage. Coverage credit measures the difference made by that UAV's current capture, keeping previous coverage and other captures unchanged. Fairness can make this contribution negative. Energy, projection, collision and persistent crash penalties are individual. The reward graph shows the mean UAV reward for each rollout; `uav-rewards.csv` records each UAV's reward and components at every step. Existing MAPPO checkpoints remain replayable with their original team score.
 
 Scenario configurations are saved with each run. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. The application does not upload scenarios, checkpoints, or experiment data.
 

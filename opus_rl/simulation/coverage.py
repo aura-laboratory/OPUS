@@ -46,3 +46,24 @@ def reward(config, coverage, energy, projection, collision, crash):
     total -= config.projection_weight * terms["projection"] + config.collision_weight * terms["collision"]
     total -= config.crash_weight * terms["crash"]
     return float(total), terms
+
+
+def marginal_coverage(previous, current, runner_up, owners, mask, memory, slots, full_metrics=None):
+    """Remove only one UAV's current capture; retain history and all other captures.
+
+    At each cell, `owners` identifies a maximum-quality capture and `runner_up`
+    contains the best capture from the other UAVs. Tied maxima therefore earn
+    zero marginal credit, independently of camera iteration order.
+    """
+    keys = ("mean", "fairness", "p10")
+    full_metrics = metrics(current, mask) if full_metrics is None else full_metrics
+    contributions = [dict.fromkeys(keys, 0.0) for _ in range(slots)]
+    for index in np.unique(owners[mask]):
+        if index < 0:
+            continue
+        changed = (owners == index) & mask
+        counterfactual = current.copy()
+        counterfactual[changed] = memory * previous[changed] + (1 - memory) * runner_up[changed]
+        without = metrics(counterfactual, mask)
+        contributions[index] = {key: full_metrics[key] - without[key] for key in keys}
+    return contributions

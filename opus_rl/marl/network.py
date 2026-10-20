@@ -32,9 +32,13 @@ def masked_pool(embeddings, mask):
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, station_slots, hidden=128):
+    """One shared policy and one shared local value function, evaluated per UAV."""
+
+    algorithm = "ippo"
+
+    def __init__(self, hidden=128):
         super().__init__()
-        self.station_slots, self.hidden = station_slots, hidden
+        self.hidden = hidden
         self.map_encoder = nn.Sequential(
             nn.Conv2d(3, 16, 5, stride=4, padding=2), nn.Tanh(),
             nn.Conv2d(16, 24, 3, stride=2, padding=1), nn.Tanh(),
@@ -45,8 +49,6 @@ class ActorCritic(nn.Module):
         self.actor = nn.Sequential(nn.Linear(hidden * 3 + CONTEXT_DIM, hidden), nn.Tanh(),
                                    nn.Linear(hidden, hidden), nn.Tanh(), nn.Linear(hidden, 5))
         self.log_std = nn.Parameter(torch.full((5,), -0.5))
-        self.global_uavs = nn.Sequential(nn.Linear(OWN_DIM + station_slots + 1, hidden // 2), nn.Tanh())
-        self.global_stations = nn.Sequential(nn.Linear(6, hidden // 2), nn.Tanh())
         self.critic = nn.Sequential(nn.Linear(hidden * 3 + CONTEXT_DIM, hidden), nn.Tanh(),
                                     nn.Linear(hidden, hidden), nn.Tanh(), nn.Linear(hidden, 1))
         for module in self.modules():
@@ -58,20 +60,20 @@ class ActorCritic(nn.Module):
         self.actor[-1].bias.data[4] = -1.25
         nn.init.orthogonal_(self.critic[-1].weight, gain=1)
 
-    def distribution(self, observation):
+    def features(self, observation):
         own = self.own_encoder(observation["uav_own"])
         map_embedding = self.map_encoder(observation["map"])
         map_embedding = map_embedding.unsqueeze(1).expand(-1, own.shape[1], -1)
         entities = self.other_encoder(observation["other_uavs"])
         team = masked_pool(entities, observation["other_uav_mask"])
-        mean = self.actor(torch.cat([own, map_embedding, team, observation["mission_context"]], dim=-1))
+        return torch.cat([own, map_embedding, team, observation["mission_context"]], dim=-1)
+
+    def distribution(self, observation):
+        mean = self.actor(self.features(observation))
         return Normal(mean, self.log_std.clamp(-5, 1).exp().expand_as(mean))
 
-    def value(self, central):
-        uavs = masked_pool(self.global_uavs(central["uavs"]), central["active_mask"])
-        stations = masked_pool(self.global_stations(central["stations"]), central["station_mask"])
-        image = self.map_encoder(central["map"])
-        return self.critic(torch.cat([uavs, stations, image, central["context"]], dim=-1)).squeeze(-1)
+    def value(self, observation):
+        return self.critic(self.features(observation)).squeeze(-1) * observation["active_mask"]
 
     @staticmethod
     def log_probability(distribution, latent):
@@ -80,11 +82,38 @@ class ActorCritic(nn.Module):
         return (distribution.log_prob(latent) - correction).sum(-1)
 
     @torch.no_grad()
-    def act(self, observation, central=None, deterministic=False, generator=None):
+    def act(self, observation, deterministic=False, generator=None):
         distribution = self.distribution(observation)
         latent = distribution.mean if deterministic else distribution.mean + distribution.stddev * torch.randn(
             distribution.mean.shape, device=distribution.mean.device, generator=generator
         )
         probability = self.log_probability(distribution, latent)
-        value = self.value(central) if central is not None else None
+        value = self.value(observation)
         return torch.tanh(latent), latent, probability, value
+
+
+class LegacyActorCritic(ActorCritic):
+    """Read-only compatibility with the original centralized-critic checkpoints."""
+
+    algorithm = "mappo"
+
+    def __init__(self, station_slots, hidden=128):
+        super().__init__(hidden)
+        self.station_slots = station_slots
+        self.global_uavs = nn.Sequential(nn.Linear(OWN_DIM + station_slots + 1, hidden // 2), nn.Tanh())
+        self.global_stations = nn.Sequential(nn.Linear(6, hidden // 2), nn.Tanh())
+
+    def value(self, central):
+        uavs = masked_pool(self.global_uavs(central["uavs"]), central["active_mask"])
+        stations = masked_pool(self.global_stations(central["stations"]), central["station_mask"])
+        image = self.map_encoder(central["map"])
+        return self.critic(torch.cat([uavs, stations, image, central["context"]], dim=-1)).squeeze(-1)
+
+    @torch.no_grad()
+    def act(self, observation, central=None, deterministic=False, generator=None):
+        distribution = self.distribution(observation)
+        latent = distribution.mean if deterministic else distribution.mean + distribution.stddev * torch.randn(
+            distribution.mean.shape, device=distribution.mean.device, generator=generator
+        )
+        value = self.value(central) if central is not None else None
+        return torch.tanh(latent), latent, self.log_probability(distribution, latent), value

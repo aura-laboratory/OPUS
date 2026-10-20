@@ -1,4 +1,4 @@
-"""A Gymnasium team environment with padded UAV slots and a cooperative reward."""
+"""A Gymnasium team environment exposing individual UAV rewards in info."""
 
 import numpy as np
 import gymnasium as gym
@@ -6,7 +6,7 @@ from gymnasium import spaces
 
 from opus_rl.configs.models import ScenarioConfig
 from opus_rl.simulation.camera import scan
-from opus_rl.simulation.coverage import fuse, metrics, reward, update_coverage
+from opus_rl.simulation.coverage import fuse, marginal_coverage, metrics, reward, update_coverage
 from opus_rl.simulation.geometry import Area
 from opus_rl.simulation.motion import (
     AnalyticalBackend, Station, UAV, minimum_separation, profile, stopped_distance, wrap_angle,
@@ -108,6 +108,9 @@ class OpusTeamEnv(gym.Env):
         self.last_gsd.fill(np.nan)
         self.step_index, self.finished = 0, False
         self.return_estimates.fill(0)
+        self.uav_rewards = np.zeros(self.n_max)
+        self.uav_reward_terms = [dict.fromkeys(("coverage", "energy", "projection", "collision", "crash"), 0.0)
+                                 for _ in range(self.n_max)]
         self.last_info = self._info(0, {}, np.zeros(self.n_max, np.int8), np.zeros(self.n_max), [], 0, 0)
         return self._observation(), self.last_info.copy()
 
@@ -274,12 +277,17 @@ class OpusTeamEnv(gym.Env):
             if j not in movements:
                 self._crash(j)
         instantaneous = np.zeros_like(self.coverage)
+        runner_up = np.zeros_like(self.coverage)
+        owners = np.full(self.coverage.shape, -1, np.int16)
         camera_stats = {"valid_cells": 0, "invalid_gsd_cells": 0, "mean_gsd": 0.0, "mean_incidence_deg": 0.0}
         gsd_weight = 0
         self.last_gsd.fill(np.nan)
-        for uav in self.uavs:
+        for index, uav in enumerate(self.uavs):
             q, gsd, statistics = scan(self.area, uav, cfg.required_gsd_m)
             best = q > instantaneous
+            runner_up[best] = instantaneous[best]
+            np.maximum(runner_up, q, out=runner_up, where=~best)
+            owners[best] = index
             instantaneous[best], self.last_gsd[best] = q[best], gsd[best]
             for key in ("valid_cells", "invalid_gsd_cells"):
                 camera_stats[key] += statistics[key]
@@ -288,14 +296,26 @@ class OpusTeamEnv(gym.Env):
                 camera_stats[key] += statistics[key] * statistics["valid_cells"]
         for key in ("mean_gsd", "mean_incidence_deg"):
             camera_stats[key] /= max(1, gsd_weight)
-        self.coverage = update_coverage(self.coverage, instantaneous, self.area.mask, cfg.coverage_lambda)
+        previous = self.coverage
+        self.coverage = update_coverage(previous, instantaneous, self.area.mask, cfg.coverage_lambda)
+        coverage_metrics = metrics(self.coverage, self.area.mask)
+        contributions = marginal_coverage(previous, self.coverage, runner_up, owners, self.area.mask,
+                                          cfg.coverage_lambda, self.n_max, coverage_metrics)
         n0 = len(self.uavs)
-        energy_norm = sum(min(1, energies[j] / (2 * u.spec.P_airborne_base_W * dt / 3600))
-                          for j, u in enumerate(self.uavs)) / n0
+        collided_uavs = {i for pair in collisions for i in pair}
+        self.uav_rewards.fill(0)
+        for j, uav in enumerate(self.uavs):
+            energy_norm = min(1, energies[j] / (2 * uav.spec.P_airborne_base_W * dt / 3600))
+            self.uav_rewards[j], self.uav_reward_terms[j] = reward(
+                cfg.reward, contributions[j], energy_norm, projections[j],
+                float(j in collided_uavs), float(uav.status == "crashed"))
         crashes = sum(u.status == "crashed" for u in self.uavs)
-        collided = len({i for pair in collisions for i in pair})
-        total, terms = reward(cfg.reward, metrics(self.coverage, self.area.mask), energy_norm,
-                              projections.sum() / n0, collided / n0, crashes / n0)
+        terms = {key: float(np.mean([item[key] for item in self.uav_reward_terms[:n0]]))
+                 for key in self.uav_reward_terms[0]}
+        total = float(self.uav_rewards[:n0].mean())  # Gymnasium/dashboard aggregate; never a learner target.
+        if cfg.reward_mode == "legacy_team":
+            total, terms = reward(cfg.reward, coverage_metrics, terms["energy"],
+                                  terms["projection"], len(collided_uavs) / n0, crashes / n0)
         self.step_index += 1
         terminated, truncated = crashes == n0, self.step_index >= cfg.horizon
         self.finished = terminated or truncated
@@ -350,6 +370,7 @@ class OpusTeamEnv(gym.Env):
                 "mission_context": np.broadcast_to(context, (self.n_max, CONTEXT_DIM)).copy()}
 
     def central_state(self, observation=None):
+        """Privileged state retained only for loading pre-IPPO MAPPO checkpoints."""
         observation = self._observation() if observation is None else observation
         assignment = np.zeros((self.n_max, self.s_max), np.float32)
         for j, u in enumerate(self.uavs):
@@ -370,7 +391,10 @@ class OpusTeamEnv(gym.Env):
 
     def _info(self, total, terms, actor_mask, energies, collisions, denied, projection, camera=None):
         return {"step": self.step_index, "simulated_seconds": self.step_index * self.config.delta_t,
-                "reward": total, "reward_terms": terms, "coverage": metrics(self.coverage, self.area.mask),
+                "reward": total, "reward_terms": terms, "reward_mode": self.config.reward_mode,
+                "uav_rewards": self.uav_rewards.tolist(),
+                "uav_reward_terms": [item.copy() for item in self.uav_reward_terms],
+                "coverage": metrics(self.coverage, self.area.mask),
                 "actor_training_mask": actor_mask.tolist(), "energy_Wh": energies.tolist(),
                 "collision_pairs": collisions, "no_station_events": denied, "projection_sum": projection,
                 "uav_statuses": [u.status for u in self.uavs], "active_uavs": len(self.uavs),
@@ -384,6 +408,7 @@ class OpusTeamEnv(gym.Env):
                   else u.inventory_index % len(self.stations), "position": u.position.tolist(),
                   "geographic": self.area.geographic(u.position[None, :2])[0].tolist(),
                   "battery_ratio": u.battery / u.spec.battery_capacity_Wh,
+                  "reward": float(self.uav_rewards[j]),
                   "yaw": u.yaw, "gimbal": u.gimbal, "type": u.spec.name, "status": u.status}
                   for j, u in enumerate(self.uavs)],
                 "stations": [{"position": s.position.tolist(), "type_index": s.type_index,
