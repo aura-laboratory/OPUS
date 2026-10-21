@@ -117,6 +117,8 @@ test('Evaluation has visible progress and persistent results rather than just a 
   h.run('testEvaluation={status:"completed",job_id:"one",elapsed_seconds:15,result:{episodes:5,return_mean:1,coverage_mean:0.5,p10_final:0.1,fairness_final:0.8,energy_Wh:2,crashed_uavs:0}};renderEvaluation()');
   assert.equal(h.nodes.get('evaluation-fill').style.width,'100%');
   assert.match(h.nodes.get('evaluation-result').innerHTML,/Mean return/);
+  assert.doesNotMatch(h.nodes.get('evaluation-result').innerHTML,/percentile/i);
+  assert.equal(h.nodes.has('metric-p10'),false);
   assert.equal(h.nodes.get('stop-evaluation').hidden,true);
   h.run('updateWorkspaceVisibility()');assert.equal(h.nodes.get('evaluation-panel').hidden,false);
 });

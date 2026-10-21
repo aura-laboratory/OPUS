@@ -385,7 +385,7 @@ function syncDocks() {
   renderLaunchFields();drawDocks();changed();
 }
 function uavLabel(u){const id='UAV '+((u.inventory_index??u.id)+1);return id+(u.type&&u.type!==id?' · '+u.type:'');}
-function applyTelemetry(frame){const started=performance.now();const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-p10').textContent=c.p10.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';
+function applyTelemetry(frame){const started=performance.now();const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';
   $('reward-label').textContent=frame.info.reward_mode==='individual'?'Mean UAV reward':'Team reward';
   $('metric-reward').parentElement.dataset.help=frame.info.reward_mode==='individual'?fieldHelp.live_reward:'Team reward for the latest step, using this legacy MAPPO model’s original reward definition. This is not a cumulative episode return.';
   const fleet=$('fleet-status'),key=frame.uavs.map(u=>u.inventory_index??u.id).join(',');
@@ -643,7 +643,7 @@ function renderEvaluation(){
   if(key===evaluationResultKey)return;evaluationResultKey=key;
   const result=job.result;
   if(result.episodes){
-    const rows=[['Mean return','return_mean','evaluation_return'],['Mean quality','coverage_mean','evaluation_quality'],['Final 10th percentile','p10_final','evaluation_p10'],['Final fairness','fairness_final','evaluation_fairness'],['Energy / episode · Wh','energy_Wh','evaluation_energy'],['Crashes / episode','crashed_uavs','evaluation_crashes']];
+    const rows=[['Mean return','return_mean','evaluation_return'],['Mean quality','coverage_mean','evaluation_quality'],['Final fairness','fairness_final','evaluation_fairness'],['Energy / episode · Wh','energy_Wh','evaluation_energy'],['Crashes / episode','crashed_uavs','evaluation_crashes']];
     $('evaluation-result').innerHTML='<dl class="result-details">'+rows.map(([label,key,help])=>`<div tabindex="0" data-help="${escapeHTML(fieldHelp[help])}"><dt>${label}</dt><dd>${Number(result[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';
   }else $('evaluation-result').textContent='No complete episodes.';
   if(result.frame){
