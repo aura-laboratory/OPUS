@@ -288,8 +288,14 @@ class OpusTeamEnv(gym.Env):
         camera_stats = {"valid_cells": 0, "invalid_gsd_cells": 0, "mean_gsd": 0.0, "mean_incidence_deg": 0.0}
         gsd_weight = 0
         self.last_gsd.fill(np.nan)
+        camera_phases = dict.fromkeys(("allocation", "pose", "projection", "visibility", "gsd", "quality",
+                                      "statistics", "fusion"), 0.0)
+        camera_phases["allocation"] += time.perf_counter() - phase_started
         for index, uav in enumerate(self.uavs):
             q, gsd, statistics = scan(self.area, uav, cfg.required_gsd_m)
+            for key, seconds in statistics.get("timings", {}).items():
+                camera_phases[key] += seconds
+            fusion_started = time.perf_counter()
             best = q > instantaneous
             runner_up[best] = instantaneous[best]
             np.maximum(runner_up, q, out=runner_up, where=~best)
@@ -300,9 +306,12 @@ class OpusTeamEnv(gym.Env):
             gsd_weight += statistics["valid_cells"]
             for key in ("mean_gsd", "mean_incidence_deg"):
                 camera_stats[key] += statistics[key] * statistics["valid_cells"]
+            camera_phases["fusion"] += time.perf_counter() - fusion_started
         for key in ("mean_gsd", "mean_incidence_deg"):
             camera_stats[key] /= max(1, gsd_weight)
         self.step_timings["camera"] = time.perf_counter() - phase_started
+        camera_phases["other"] = max(0, self.step_timings["camera"] - sum(camera_phases.values()))
+        self.step_timings.update({"camera." + key: seconds for key, seconds in camera_phases.items()})
         phase_started = time.perf_counter()
         previous = self.coverage
         self.coverage = update_coverage(previous, instantaneous, self.area.mask, cfg.coverage_lambda)

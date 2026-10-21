@@ -20,6 +20,8 @@ function harness(){
     const tab=tag[0].match(/\bdata-tab="([^"]+)"/)?.[1];if(tab){const element=node();element.dataset.tab=tab;nav.push(element);}
   }
   nodes.get('simulation-policy').value='heuristic';
+  const modelOption={textContent:'Model',hidden:true,disabled:true};
+  nodes.get('simulation-policy').querySelector=()=>modelOption;
   const frames=[],fits=[],polylines=[];let zoom=1,contained=false,invalidated=false;
   const fakeMap={invalidateSize(){invalidated=true;},getBoundsZoom(){return 18.35;},getBounds(){return {contains:()=>contained};},
     getZoom:()=>zoom,fitBounds(bounds,options){assert.ok(invalidated,'fit must follow map layout invalidation');fits.push({bounds,options});contained=true;zoom=18.35;},getContainer:()=>({style:{}})};
@@ -32,7 +34,7 @@ function harness(){
   let source=fs.readFileSync(path.join(root,'app.js'),'utf8');source=source.slice(0,source.lastIndexOf('\ninitializeFieldHelp();'));
   vm.runInContext(source,context);
   vm.runInContext('map=fakeMap;lastFrame=testFrame;',context);
-  return {nodes,context,fits,polylines,run:code=>vm.runInContext(code,context),flush(){while(frames.length)frames.shift()();}};
+  return {nodes,context,fits,polylines,modelOption,run:code=>vm.runInContext(code,context),flush(){while(frames.length)frames.shift()();}};
 }
 
 test('Mission shows setup only; Test owns playback and Training retains metrics',async()=>{
@@ -60,12 +62,50 @@ test('Replay framing waits for layout and uses small equal padding',()=>{
   h.run('setTab("test")');h.flush();assert.equal(h.fits.length,2,'tab changes explicitly reframe');
 });
 
-test('Test trails use the latest X segments and disappear in other tabs',()=>{
+test('Test renders the distance-clipped path and hides it in other tabs',()=>{
   const h=harness();let clears=0;h.context.trailLayer={clearLayers(){clears++;}};
-  h.nodes.get('test-trail-steps').value='2';
-  h.run('trailGroup=trailLayer;currentTab="test";drawTrails({trails:[{inventory_index:0,points:[[1,1],[2,2],[3,3],[4,4]]}]})');
+  h.nodes.get('test-trail-length').value='2';
+  h.run('trailGroup=trailLayer;currentTab="test";drawTrails({trails:[{inventory_index:0,points:[[2,2],[3,3],[4,4]]}]})');
   assert.equal(h.polylines.length,1);assert.deepEqual(Array.from(h.polylines[0].points,point=>Array.from(point)),[[2,2],[3,3],[4,4]]);
   h.run('currentTab="mission";drawTrails({trails:[]})');assert.equal(clears,2);
+});
+
+test('Auto-save coalesces edits and serializes in-flight name writes',async()=>{
+  const h=harness(),saved=[];let release,active=0,maxActive=0;
+  h.context.persist=async value=>{saved.push(value);active++;maxActive=Math.max(active,maxActive);if(value==='B')await new Promise(resolve=>release=resolve);active--;};
+  h.run('globalThis.saver=createAutosave("A",persist,error=>{throw error;});saver.change("B")');
+  const first=h.run('saver.flush()');
+  h.run('saver.change("C");saver.change("D")');await h.run('saver.flush()');
+  assert.deepEqual(saved,['B']);release();await first;await Promise.resolve();
+  assert.deepEqual(saved,['B','D']);assert.equal(maxActive,1);
+});
+
+test('Loaded model is named and unload clears it without sending a training command',async()=>{
+  const h=harness(),requests=[];
+  h.context.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({unloaded:true})};};
+  h.run('testBackendReady=true;selectedRun={run_id:"one",name:"Square",checkpoint:"best.pt"};updateLoadedName()');
+  assert.equal(h.modelOption.textContent,'Square · best.pt');assert.equal(h.modelOption.hidden,false);
+  assert.equal(h.run('runIsLoaded("one","best.pt")'),true);
+  await h.run('unloadRun()');
+  assert.equal(h.run('runIsLoaded("one","best.pt")'),false);assert.equal(h.modelOption.hidden,true);
+  assert.deepEqual(requests.map(request=>request.url),['/api/simulation/unload']);
+});
+
+test('Rewound training display stays fixed as live data advances; Live restores the newest state',()=>{
+  const h=harness(),draws=[];h.context.draws=draws;
+  h.run('currentTab="training";applyFrame=frame=>draws.push(frame);applyTelemetry=frame=>draws.push(frame);chart=()=>{};trainingJob={status:"running",phase:"collecting",steps:8,live:{episode:1,episode_step:8,episode_length:500},frame:{tag:"latest-map"},telemetry:{tag:"latest-readings"},timeline:{id:"one",first_step:0,last_step:8,last_seconds:40}};Object.assign(timelineViews.training,{id:"one",live:false,step:2,frame:{episode:1,info:{step:2},history_seconds:10}});renderTraining()');
+  assert.equal(draws.length,0);assert.match(h.nodes.get('timeline-time').textContent,/Past · 10 s/);
+  h.run('returnLive()');assert.equal(draws.length,2);assert.equal(draws[1].tag,'latest-readings');
+  assert.match(h.nodes.get('timeline-time').textContent,/Live · 40 s/);
+});
+
+test('Scrubbing requests historical data without resetting or stopping the simulator',async()=>{
+  const h=harness(),requests=[];
+  h.context.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>({history_step:2,history_seconds:10,episode:1,info:{step:2}})};};
+  h.run('currentTab="mission";trainingJob={timeline:{id:"one",first_step:0,last_step:10}};Object.assign(timelineViews.training,{id:"one",live:false,step:2})');
+  await h.run('showHistory("training",2)');
+  assert.equal(requests.length,1);assert.match(requests[0],/^\/api\/visualization\/history\/training\?/);
+  assert.equal(h.run('timelineViews.training.frame.info.step'),2);
 });
 
 test('Evaluation has visible progress and persistent results rather than just a toast',()=>{

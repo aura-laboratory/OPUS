@@ -56,7 +56,7 @@
   <section id="test-controls" hidden>
     <div class="group"><h2>Testing</h2>
       <div id="test-fields" class="fields">
-        <label class="field" data-reading-help="trail_steps"><span>Trail length</span><span class="value-box"><input id="test-trail-steps" type="number" value="100" min="0" max="2000" step="1"><span class="unit">steps</span></span><small class="field-error" hidden></small></label>
+        <label class="field" data-reading-help="trail_length_m"><span>Path length</span><span class="value-box"><input id="test-trail-length" type="number" value="500" min="0" max="1000000" step="any"><span class="unit">m</span></span><small class="field-error" hidden></small></label>
         <label class="field" data-reading-help="playback_rate"><span>Playback speed</span><span class="value-box"><input id="test-playback-rate" type="number" value="3" min="0.1" max="30" step="0.1"><span class="unit">steps/s</span></span><small class="field-error" hidden></small></label>
         <label class="field" data-reading-help="test_episodes"><span>Evaluation episodes</span><span class="value-box"><input id="test-episodes" type="number" value="5" min="1" max="100" step="1"></span><small class="field-error" hidden></small></label>
         <label class="field" data-reading-help="test_seed"><span>Seed</span><span class="value-box"><input id="test-seed" type="number" value="42" min="0" max="2147483647" step="1"></span><small class="field-error" hidden></small></label>
@@ -74,11 +74,14 @@
   <div class="simulation-bar" id="simulation-bar" data-tabs="training test" hidden><div data-reading-help="simulation_time"><span class="eyebrow" id="simulation-label">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
     <div id="episode-counter" class="muted" data-tabs="training" data-reading-help="episode_counter" hidden></div>
     <div class="replay-controls" id="simulation-controls" data-tabs="test" hidden>
-      <label class="sr-only" for="simulation-policy">Test policy</label><select id="simulation-policy"><option value="heuristic">Circular baseline</option><option value="random">Random actions</option><option value="model" disabled>Loaded model</option></select>
+      <label class="sr-only" for="simulation-policy">Test policy</label><select id="simulation-policy"><option value="heuristic">Circular baseline</option><option value="random">Random actions</option><option value="model" disabled hidden>Model</option></select>
       <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button>
     </div>
   </div>
-  <div id="loaded-model" class="muted" data-tabs="test" hidden></div>
+  <div id="timeline-controls" class="timeline" data-tabs="training test" data-reading-help="timeline" hidden>
+    <label class="sr-only" for="timeline-slider">Visualization time</label><input id="timeline-slider" type="range" min="0" max="0" value="0" step="1" disabled>
+    <output id="timeline-time" for="timeline-slider">Live</output><button id="timeline-live" disabled>Live</button>
+  </div>
   <div id="training-phase" class="muted" data-tabs="training" hidden></div>
   <div class="metrics" id="live-metrics" data-tabs="training test" hidden><div data-reading-help="mean_quality"><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div data-reading-help="p10_quality"><span>10th percentile</span><strong id="metric-p10">0.000</strong></div><div data-reading-help="spatial_fairness"><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div data-reading-help="live_reward"><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
   <div id="safety-metrics" class="muted" data-tabs="training test" hidden></div>

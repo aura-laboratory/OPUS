@@ -78,3 +78,12 @@ dialog{background:#16232f;color:#e8eef3;border:1px solid #536776;border-radius:8
 .browser-timing{margin-top:12px;border-top:1px solid #304352;padding-top:8px;font-size:11px;line-height:1.7;color:#a9bac8}
 .browser-timing strong{font-weight:400;color:#eed2a9}
 #map-refresh-info{font-size:11px;color:#a9bac8;margin-top:10px}
+.run-block .toolbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+.run-block .toolbar button,.run-block .toolbar a{padding:7px 3px;margin:0;font-size:12px;white-space:nowrap;text-align:center;display:flex;align-items:center;justify-content:center;min-width:0}
+.run-name[aria-invalid="true"]{border-color:#ef867b}
+.simulation-bar select{width:clamp(165px,24vw,420px);max-width:100%}
+.timeline{display:flex;align-items:center;gap:12px;min-width:0}
+.timeline input[type="range"]{flex:1;min-width:60px;width:auto;padding:0;height:20px;accent-color:#8cc6f1;cursor:ew-resize;border:0;background:transparent}
+.timeline output{font-size:12px;color:#a9bac8;font-variant-numeric:tabular-nums;white-space:nowrap}
+.timeline button{padding:5px 9px;font-size:12px}
+#timing-diagnostics tr.subphase-detail td:first-child{padding-left:22px;color:#95a9b8}

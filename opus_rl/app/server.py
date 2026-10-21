@@ -25,7 +25,7 @@ from opus_rl.app.defaults import default_experiment
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
 from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
-from opus_rl.simulation.trajectory import Trajectories
+from opus_rl.simulation.history import VisualHistory
 from opus_rl.training.evaluate import evaluate, heuristic_action
 from opus_rl.training.hardware import hardware_info, select_device
 from opus_rl.training.train import load_checkpoint, save_json, train
@@ -35,7 +35,7 @@ class PlaybackRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     checkpoint: str = "best.pt"
     seed: int | None = Field(None, ge=0, le=2**31 - 1)
-    trail_steps: int = Field(100, ge=0, le=2000)
+    trail_length_m: float = Field(500, ge=0, le=1000000)
 
 
 class EvaluationRequest(PlaybackRequest):
@@ -52,7 +52,9 @@ class State:
         self.simulation_model = None
         self.simulation_source = None
         self.simulation_episode = 1
-        self.trails = Trajectories()
+        self.test_history = VisualHistory()
+        self.training_history = VisualHistory()
+        self.simulation_steps = 0
         self.worker = None
         self.stop = threading.Event()
         self.status = {"status": "idle", "history": []}
@@ -60,6 +62,7 @@ class State:
         self.evaluation_worker = None
         self.evaluation_stop = threading.Event()
         self.evaluation_status = {"status": "idle"}
+        self.evaluation_history = None
         self.geocode_lock = asyncio.Lock()
         self.last_geocode = 0.0
         self.geocode_cache = {}
@@ -72,6 +75,11 @@ class State:
             if sample is not None:
                 self.samples.append(sample)
                 update["live"] = sample
+            telemetry = update.get("telemetry", previous.get("telemetry"))
+            if telemetry and (sample is not None or "frame" in update):
+                live = sample or previous.get("live", {})
+                self.training_history.append(update.get("steps", 0), live.get("episode", 1),
+                    live.get("total_simulated_seconds", 0), telemetry, update.get("frame"))
             history = previous.get("history", [])
             if "metrics" in update:
                 history = (history + [update["metrics"]])[-1000:]
@@ -86,15 +94,20 @@ class State:
             raise HTTPException(404, "Run does not exist.")
         return directory
 
-    def simulation_frame(self, trail_steps):
+    def simulation_frame(self, trail_length_m):
         if self.simulation is None:
             raise HTTPException(409, "Initialize the test first.")
-        return {**self.simulation.frame(), "episode": self.simulation_episode,
-                "trails": self.trails.snapshot(self.simulation.step_index, trail_steps)}
+        frame = self.simulation.frame()
+        self.test_history.append(self.simulation_steps, self.simulation_episode,
+            self.simulation_steps * self.simulation.config.delta_t,
+            {"info": frame["info"], "uavs": frame["uavs"]}, frame)
+        return {**frame, "episode": self.simulation_episode,
+                "trails": self.test_history.trails[self.simulation_episode].snapshot(
+                    self.simulation_steps, trail_length_m), "timeline": self.test_history.metadata()}
 
     def reset_trails(self):
-        self.trails = Trajectories()
-        self.trails.record(self.simulation)
+        self.test_history.clear()
+        self.simulation_steps = 0
 
 
 def create_app(runs_root=None):
@@ -132,8 +145,8 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 4,
-                "test_controls_revision": 1,
+                "training_controls_revision": 5,
+                "test_controls_revision": 2,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -167,33 +180,32 @@ def create_app(runs_root=None):
         return {"valid": True, "frame": env.frame(), "config": config.model_dump()}
 
     @app.post("/api/simulation/reset")
-    def reset_simulation(config: ExperimentConfig, trail_steps: int = Query(100, ge=0, le=2000)):
+    def reset_simulation(config: ExperimentConfig, trail_length_m: float = Query(500, ge=0, le=1000000)):
         with state.lock:
             state.simulation = OpusTeamEnv(config.scenario)
             state.simulation.reset(seed=config.training.seed)
             state.simulation.action_space.seed(config.training.seed)
             state.simulation_episode = 1
             state.reset_trails()
-            return state.simulation_frame(trail_steps)
+            return state.simulation_frame(trail_length_m)
 
     @app.get("/api/simulation/frame")
-    def simulation_frame(trail_steps: int = Query(100, ge=0, le=2000)):
+    def simulation_frame(trail_length_m: float = Query(500, ge=0, le=1000000)):
         with state.lock:
-            return state.simulation_frame(trail_steps)
+            return state.simulation_frame(trail_length_m)
 
     @app.post("/api/simulation/step")
     def step_simulation(body: dict):
         with state.lock:
-            length = body.get("trail_steps", 100)
-            if not isinstance(length, int) or not 0 <= length <= 2000:
-                raise HTTPException(400, "Trail length must be 0–2000 steps.")
+            length = body.get("trail_length_m", 500)
+            if type(length) not in (int, float) or not np.isfinite(length) or not 0 <= length <= 1000000:
+                raise HTTPException(400, "Path length must be 0–1,000,000 m.")
             env = state.simulation
             if env is None:
                 raise HTTPException(409, "Initialize the simulation first.")
             if env.finished:
                 env.reset()
                 state.simulation_episode += 1
-                state.reset_trails()
             policy = body.get("policy", "heuristic")
             if policy == "random":
                 action = env.action_space.sample()
@@ -210,8 +222,26 @@ def create_app(runs_root=None):
             else:
                 raise HTTPException(400, "Unknown simulation policy.")
             env.step(action)
-            state.trails.record(env)
+            state.simulation_steps += 1
             return state.simulation_frame(length)
+
+    @app.get("/api/visualization/history/{context}")
+    def visual_history(context: Literal["training", "test"], step: int = Query(ge=0),
+                       timeline_id: str = "", trail_length_m: float = Query(500, ge=0, le=1000000)):
+        with state.lock:
+            history = state.training_history if context == "training" else state.test_history
+            if context == "test" and state.evaluation_history and timeline_id == state.evaluation_history.identity:
+                history = state.evaluation_history
+            if timeline_id and timeline_id != history.identity:
+                raise HTTPException(409, "The visualization history has changed. Return to Live.")
+            return history.frame(step, trail_length_m if context == "test" else 0)
+
+    @app.post("/api/simulation/unload")
+    def unload_model():
+        with state.lock:
+            state.simulation = state.simulation_model = state.simulation_source = None
+            state.test_history.clear()
+            return {"unloaded": True}
 
     @app.post("/api/training/start")
     def start(config: ExperimentConfig):
@@ -230,6 +260,7 @@ def create_app(runs_root=None):
                 raise HTTPException(400, "Update interval exceeds the 3 GiB v1 memory budget; reduce the interval.")
             state.stop = threading.Event()
             state.samples.clear()
+            state.training_history.clear()
             state.status = {"status": "starting", "steps": 0, "total_steps": config.training.total_steps,
                             "phase": "starting", "history": [], "frame": env.frame(), "frame_step": 0,
                             "telemetry": env.telemetry()}
@@ -263,6 +294,7 @@ def create_app(runs_root=None):
             result = state.status.copy()
             cursor = after_step if run_id == result.get("run_id") else -1
             result["samples"] = [row for row in state.samples if row["steps"] > cursor]
+            result["timeline"] = state.training_history.metadata()
             return result
 
     @app.get("/api/runs")
@@ -307,7 +339,7 @@ def create_app(runs_root=None):
             shutil.rmtree(directory)
             if state.simulation_source == run_id:
                 state.simulation = state.simulation_model = state.simulation_source = None
-                state.trails = Trajectories()
+                state.test_history.clear()
             if state.evaluation_status.get("run_id") == run_id:
                 state.evaluation_status = {"status": "idle"}
         return {"deleted": run_id}
@@ -332,7 +364,7 @@ def create_app(runs_root=None):
             state.simulation.action_space.seed(seed)
             state.simulation_episode = 1
             state.reset_trails()
-            return {"config": config.model_dump(), "frame": state.simulation_frame(body.trail_steps)}
+            return {"config": config.model_dump(), "frame": state.simulation_frame(body.trail_length_m)}
 
     @app.post("/api/runs/{run_id}/evaluate")
     def evaluate_run(run_id, body: EvaluationRequest):
@@ -347,7 +379,7 @@ def create_app(runs_root=None):
             raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
         seed = body.seed if body.seed is not None else config.training.seed + 10000
         result = evaluate(scenario, model, body.episodes, seed=seed, policy=body.policy,
-                          include_frame=True, trail_steps=body.trail_steps)
+                          include_frame=True, trail_length_m=body.trail_length_m)
         save_json(directory / "evaluation-manual.json", {k: v for k, v in result.items() if k != "frame"})
         return result
 
@@ -368,14 +400,16 @@ def create_app(runs_root=None):
 
             def work():
                 try:
+                    visual_history = VisualHistory()
                     result = evaluate(scenario, model, body.episodes, seed=body.seed or 0, policy=body.policy,
                         stop_event=state.evaluation_stop, include_frame=True, callback=progress,
-                        trail_steps=body.trail_steps)
+                        trail_length_m=body.trail_length_m, visual_history=visual_history)
                     if directory and result.get("episodes"):
                         save_json(directory / "evaluation-manual.json", {
                             **{key: value for key, value in result.items() if key != "frame"},
                             "checkpoint": body.checkpoint, "policy": body.policy})
                     with state.lock:
+                        state.evaluation_history = visual_history if result.get("frame") else None
                         state.evaluation_status.update(status="stopped" if state.evaluation_stop.is_set()
                             else "completed", result=result, elapsed_seconds=time.perf_counter() - started)
                 except Exception as error:

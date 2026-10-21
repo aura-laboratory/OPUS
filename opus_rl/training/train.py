@@ -214,7 +214,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                         with timings.measure("telemetry"):
                             latest_telemetry = env.telemetry()
                             frame = {}
-                            if now - last_frame_at >= 1 or term or trunc or steps == cfg.total_steps:
+                            if now - last_frame_at >= 1 or info["step"] == 1 or term or trunc or steps == cfg.total_steps:
                                 interval = steps - last_frame_step
                                 frame = {"frame": env.frame(), "frame_step": steps,
                                          "frame_step_delta": interval,

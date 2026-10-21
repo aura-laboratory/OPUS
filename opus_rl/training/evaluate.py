@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import torch
 
@@ -21,7 +23,7 @@ def heuristic_action(env):
 
 
 def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
-             stop_event=None, include_frame=False, callback=None, trail_steps=0):
+             stop_event=None, include_frame=False, callback=None, trail_length_m=0, visual_history=None):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
@@ -30,7 +32,10 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         observation, info = env.reset(seed=seed + episode)
         env.action_space.seed(seed + episode)
         trails = Trajectories()
-        if include_frame and episode == 0 and trail_steps:
+        last_frame_at = time.perf_counter()
+        if visual_history is not None and episode == 0:
+            visual_history.append(0, 1, 0, env.telemetry(), env.frame())
+        if include_frame and episode == 0 and trail_length_m:
             trails.record(env)
         total = energy_used = collision_count = 0
         individual_returns = np.zeros(env.n_max)
@@ -49,8 +54,14 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
                 with torch.no_grad():
                     action = model.act(packed, deterministic=True)[0][0].cpu().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
-            if include_frame and episode == 0 and trail_steps:
+            if include_frame and episode == 0 and trail_length_m:
                 trails.record(env)
+            if visual_history is not None and episode == 0:
+                now = time.perf_counter()
+                frame = env.frame() if now - last_frame_at >= 1 or info["step"] == 1 or terminated or truncated else None
+                if frame is not None:
+                    last_frame_at = now
+                visual_history.append(info["step"], 1, info["simulated_seconds"], env.telemetry(), frame)
             if callback:
                 callback({"episode": episode + 1, "episodes": episodes, "step": info["step"],
                           "episode_length": scenario.horizon})
@@ -74,8 +85,8 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         collisions.append(collision_count)
         crashes.append(info["crashed_uavs"])
         if include_frame and episode == 0:
-            frames.append({**env.frame(), "episode": 1,
-                           "trails": trails.snapshot(env.step_index, trail_steps)})
+            frames.append(visual_history.frame(env.step_index, trail_length_m) if visual_history is not None else {
+                **env.frame(), "episode": 1, "trails": trails.snapshot(env.step_index, trail_length_m)})
         env.close()
     if not totals:
         return {"episodes": 0}

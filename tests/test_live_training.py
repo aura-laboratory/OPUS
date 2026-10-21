@@ -54,7 +54,10 @@ def test_every_training_step_is_published_before_reset_and_independent_of_update
     assert timing['update']['calls'] == 2 and timing['evaluation']['calls'] == 1
     assert timing['simulation.camera']['calls'] == 9
     assert sum(row['percent'] for key, row in timing.items() if '.' not in key) == pytest.approx(100)
-    assert sum(timing[key]['seconds'] for key in timing if key.startswith('simulation.')) <= timing['simulation']['seconds']
+    assert sum(timing[key]['seconds'] for key in timing if key.startswith('simulation.')
+               and key.count('.') == 1) <= timing['simulation']['seconds']
+    assert sum(timing[key]['seconds'] for key in timing if key.startswith('simulation.camera.')) == pytest.approx(
+        timing['simulation.camera']['seconds'])
     assert all(row['seconds'] >= 0 and row['mean_ms'] >= 0 for row in timing.values())
     assert json.loads((directory / 'summary.json').read_text())['timings'] == timing
 

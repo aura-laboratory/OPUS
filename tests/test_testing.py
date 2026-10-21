@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import numpy as np
 from fastapi.testclient import TestClient
 
 from opus_rl.app import server
@@ -14,6 +15,7 @@ from opus_rl.configs import ExperimentConfig
 from opus_rl.configs.models import TrainConfig
 from opus_rl.marl.network import ActorCritic
 from opus_rl.simulation.trajectory import Trajectories
+from opus_rl.simulation.geometry import Area
 from test_environment import small_config
 
 
@@ -80,18 +82,18 @@ def test_delete_rejects_training_run_and_escaped_paths(tmp_path, saved_run):
 def test_playback_trails_respect_length_reset_and_invalid_requests(tmp_path, saved_run):
     config, _ = saved_run
     with TestClient(server.create_app(tmp_path)) as client:
-        assert client.post('/api/simulation/reset?trail_steps=2', json=config.model_dump()).status_code == 200
+        assert client.post('/api/simulation/reset?trail_length_m=2', json=config.model_dump()).status_code == 200
         for _ in range(6):
-            frame = client.post('/api/simulation/step', json={'policy': 'heuristic', 'trail_steps': 2}).json()
+            frame = client.post('/api/simulation/step', json={'policy': 'heuristic', 'trail_length_m': 2}).json()
             assert all(len(trail['points']) <= 3 for trail in frame['trails'])
         assert frame['episode'] == 1 and frame['info']['step'] == 6
-        assert not client.get('/api/simulation/frame?trail_steps=0').json()['trails']
-        assert client.post('/api/simulation/step', json={'trail_steps': 2001}).status_code == 400
+        assert not client.get('/api/simulation/frame?trail_length_m=0').json()['trails']
+        assert client.post('/api/simulation/step', json={'trail_length_m': 1000001}).status_code == 400
         assert client.get('/api/simulation/frame').json()['info']['step'] == 6
-        frame = client.post('/api/simulation/step', json={'policy': 'heuristic', 'trail_steps': 2}).json()
+        frame = client.post('/api/simulation/step', json={'policy': 'heuristic', 'trail_length_m': 2}).json()
         assert frame['episode'] == 2 and frame['info']['step'] == 1
         assert all(len(trail['points']) <= 2 for trail in frame['trails'])
-        assert client.post('/api/simulation/reset?trail_steps=-1', json=config.model_dump()).status_code == 422
+        assert client.post('/api/simulation/reset?trail_length_m=-1', json=config.model_dump()).status_code == 422
 
 
 def test_trajectory_storage_is_bounded():
@@ -100,13 +102,13 @@ def test_trajectory_storage_is_bounded():
     uav = SimpleNamespace(inventory_index=4, status='coverage', position=np.zeros(3))
     env = SimpleNamespace(uavs=[uav], area=SimpleNamespace(geographic=lambda point: point), step_index=0)
     trails = Trajectories()
-    for step in range(2200):
+    for step in range(11000):
         env.step_index = step
         uav.position[0] = step
         trails.record(env)
-    assert len(trails.points[4]) == 2001
-    assert len(trails.snapshot(2199, 10)[0]['points']) == 11
-    assert trails.snapshot(2199, 10)[0]['points'][0] == [2189, 0]
+    assert len(trails.points[4]) == 10001
+    assert len(trails.snapshot(10999, 10)[0]['points']) == 11
+    assert trails.snapshot(10999, 10)[0]['points'][0] == [10989, 0]
 
 
 def test_async_evaluation_has_progress_cancel_guard_and_excludes_partial_episode(tmp_path, saved_run, monkeypatch):
@@ -144,14 +146,21 @@ def test_async_evaluation_has_progress_cancel_guard_and_excludes_partial_episode
 def test_async_saved_and_baseline_evaluation_show_repeatable_results(tmp_path, saved_run):
     config, directory = saved_run
     with TestClient(server.create_app(tmp_path)) as client:
-        request = {'episodes': 2, 'seed': 123, 'trail_steps': 2}
+        request = {'episodes': 2, 'seed': 123, 'trail_length_m': 2}
         assert client.post('/api/runs/saved/evaluation/start', json=request).status_code == 200
         first = finished_evaluation(client)
         assert first['status'] == 'completed'
         result = first['result']
         assert result['episodes'] == 2 and result['seeds'] == [123, 124]
         assert result['frame']['info']['step'] == 6
-        assert all(len(trail['points']) <= 3 for trail in result['frame']['trails'])
+        timeline_id = result['frame']['timeline']['id']
+        old = client.get(f'/api/visualization/history/test?step=2&timeline_id={timeline_id}').json()
+        assert old['info']['step'] == 2 and old['history_seconds'] == 10
+        area = Area(config.scenario)
+        for trail in result['frame']['trails']:
+            points = np.asarray(trail['points'])
+            xy = np.column_stack(area.forward.transform(points[:, 0], points[:, 1]))
+            assert np.linalg.norm(np.diff(xy, axis=0), axis=1).sum() <= 2.000001
         saved = json.loads((directory / 'evaluation-manual.json').read_text())
         assert saved['checkpoint'] == 'best.pt' and saved['return_mean'] == result['return_mean']
         assert client.get('/api/runs').json()[0]['manual_evaluation']['episodes'] == 2

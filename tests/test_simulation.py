@@ -81,6 +81,19 @@ def test_nadir_gsd_matches_pinhole_and_quality_formula():
     assert np.nanmean(oblique) > 50 / focal
 
 
+def test_camera_projection_rejects_ground_behind_camera_and_reports_subphases():
+    area, spec = Area(ScenarioConfig(grid_size=64, observation_size=16)), UAVType()
+    uav = UAV(spec, 0, np.array([80.0, 80.0, 50.0]), 70, status="coverage")
+    _, _, statistics = scan(area, uav, 0.05)
+    assert {'allocation', 'pose', 'projection', 'visibility', 'gsd', 'quality', 'statistics'} <= statistics['timings'].keys()
+    assert all(seconds >= 0 for seconds in statistics['timings'].values())
+    # Looking up: the ground's central ray can project to the image centre but has negative depth.
+    uav.gimbal = np.pi / 2
+    quality, gsd, statistics = scan(area, uav, 0.05)
+    assert not quality.any() and not np.isfinite(gsd).any()
+    assert statistics['valid_cells'] == 0
+
+
 def test_raster_boundary_preserves_cells_touched_at_a_vertex():
     area = Area(ScenarioConfig(polygon_xy=[(0, 0), (16, 0), (0, 16)],
         station_positions_xy=[(1, 1), (1, 5)], grid_size=16, observation_size=8))
