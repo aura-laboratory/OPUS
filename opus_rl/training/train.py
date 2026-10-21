@@ -1,7 +1,6 @@
 import csv
 import json
 import subprocess
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ from opus_rl.marl.network import (
 )
 from opus_rl.marl.ppo import generalized_advantage, update
 from .evaluate import evaluate
+from .control import TrainingControl
 from .hardware import hardware_info, select_device
 from .timing import Timings
 
@@ -51,7 +51,8 @@ def load_checkpoint(path, device="cpu"):
     return model, config, data
 
 
-def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=None, output_name=None):
+def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=None, output_name=None,
+          control=None):
     setup_started = time.perf_counter()
     config = config.model_copy(deep=True)
     config.scenario.reward_mode = "individual"  # New runs always use IPPO, including from legacy run configs.
@@ -59,7 +60,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     hardware = hardware_info()
     cfg.torch_threads = min(cfg.torch_threads, hardware["cpu_threads"])
     device, device_reason = select_device(config)
-    stop_event = stop_event or threading.Event()
+    control = control or TrainingControl(stop_event)
+    stop_event = control.stop_event
     run_id = output_name or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
     if Path(run_id).name != run_id:
         raise ValueError("Run name must be a single directory name.")
@@ -81,7 +83,11 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     action_rng = torch.Generator(device=device).manual_seed(cfg.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, eps=1e-5)
     started = setup_started
-    timings = Timings(device)
+    # Scheduled evaluation can pause inside a measured phase; exclude that idle time.
+    def active_clock():
+        return time.perf_counter() - control.paused_seconds
+
+    timings = Timings(device, clock=active_clock)
     last_frame_at = last_flush_at = started
     last_frame_step = 0
     latest_telemetry = env.telemetry()
@@ -101,10 +107,15 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
 
     def publish(phase, **extra):
         if callback:
+            elapsed = time.perf_counter() - started
             callback({"run_id": run_id, "steps": steps, "total_steps": cfg.total_steps,
-                      "phase": phase, "elapsed_seconds": time.perf_counter() - started,
-                      "steps_per_second": steps / max(time.perf_counter() - started, 1e-6),
+                      "phase": phase, "elapsed_seconds": elapsed, "paused_seconds": control.paused_seconds,
+                      "control_status": control.status,
+                      "steps_per_second": steps / max(elapsed - control.paused_seconds, 1e-6),
                       "timings": timings.snapshot(), **extra})
+
+    def gate(phase, consume=False):
+        return control.wait(lambda: publish(phase), consume=consume)
 
     def checkpoint_file(name):
         target = directory / name
@@ -158,7 +169,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                                         "rewards", "terminated", "ended", "masks", "value_masks")}
                 coverage_means, energies, completed_returns, reward_components = [], [], [], []
                 for _ in range(min(cfg.rollout_steps, cfg.total_steps - steps)):
-                    if stop_event.is_set():
+                    if not gate("collecting", consume=True):
                         break
                     with timings.measure("policy", gpu=True):
                         obs = stack_dict([pack_observation(observation)])
@@ -232,6 +243,9 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                     observation = next_obs
                 if not batch["rewards"]:
                     break
+                # Stop still saves a partial rollout; reaching the budget completes automatically.
+                if steps < cfg.total_steps:
+                    gate("updating")
                 publish("updating")
                 with timings.measure("update", gpu=True):
                     arrays = {key: np.asarray(batch[key], np.float32) for key in batch if key != "obs"}
@@ -246,7 +260,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 elapsed = time.perf_counter() - started
                 update_index += 1
                 stats.update({"steps": steps, "update": update_index, "elapsed_seconds": elapsed,
-                    "agent_steps": agent_steps, "steps_per_second": steps / max(elapsed, 1e-6),
+                    "agent_steps": agent_steps, "steps_per_second": steps / max(elapsed - control.paused_seconds, 1e-6),
                     "mean_step_reward": float(arrays["rewards"][arrays["value_masks"] > 0].mean()),
                     "mean_coverage": float(np.mean(coverage_means)), "energy_Wh_per_step": float(np.mean(energies)),
                     "mean_episode_return": float(np.mean(completed_returns)) if completed_returns else 0,
@@ -272,7 +286,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                         evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes,
                             seed=cfg.seed + 10000, device=device, stop_event=stop_event,
                             callback=(lambda progress: publish("evaluating", evaluation_progress=progress))
-                            if callback else None)
+                            if callback else None, before_step=lambda: gate("evaluating"))
                     if evaluation.get("episodes", 0):
                         clean = {key: value for key, value in evaluation.items() if key != "frame"}
                         summary["evaluation"] = clean
@@ -307,6 +321,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         raise
     finally:
         summary.update(steps=steps, agent_steps=agent_steps, elapsed_seconds=time.perf_counter() - started,
+                       paused_seconds=control.paused_seconds,
                        finished_utc=datetime.now(timezone.utc).isoformat(), timings=timings.snapshot())
         save_json(directory / "summary.json", summary)
         env.close()

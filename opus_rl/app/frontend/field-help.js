@@ -99,6 +99,8 @@ const fieldHelp = {
   reward_projection:'Mean normalized action-correction penalty before applying its weight.',
   reward_collision:'Fraction of UAV transitions involving a collision in this rollout.',
   reward_crash:'Fraction of UAV transitions spent crashed in this rollout.',
+  pause_training:'Pause training after the current operation finishes. Resume continues the same rollout, model and episode. Paused time is excluded from processing-time percentages and steps/s.',
+  step_training:'While paused, advance exactly one training environment step, with all UAVs acting together. Pending weight updates or scheduled evaluation may run first. Training then pauses again; the final step completes the run.',
   evaluate_policy:'Evaluate the policy selected beside this button: the named loaded model, Circular baseline or Random actions. Uses the evaluation episode count and seed from Testing.'
 };
 

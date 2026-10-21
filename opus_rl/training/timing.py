@@ -7,8 +7,9 @@ import torch
 
 
 class Timings:
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cpu", clock=None):
         self.device = device
+        self.clock = clock or time.perf_counter
         self.rows = {}
 
     def record(self, phase, seconds):
@@ -24,13 +25,13 @@ class Timings:
         synchronize = gpu and str(self.device).startswith("cuda")
         if synchronize:
             torch.cuda.synchronize(self.device)
-        started = time.perf_counter()
+        started = self.clock()
         try:
             yield
         finally:
             if synchronize:
                 torch.cuda.synchronize(self.device)
-            self.record(phase, time.perf_counter() - started)
+            self.record(phase, max(0, self.clock() - started))
 
     def snapshot(self):
         total = sum(row["seconds"] for name, row in self.rows.items() if "." not in name)

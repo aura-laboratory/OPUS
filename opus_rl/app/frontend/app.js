@@ -522,10 +522,25 @@ function renderTraining(){
   $('episode-counter').textContent=past?`Episode ${past.episode} · step ${past.info.step}`:live?`Episode ${live.episode} · step ${live.episode_step} / ${live.episode_length}`:'Episode 1 · step 0';
   const phases={starting:'Starting',collecting:'Collecting experience',updating:'Updating weights',evaluating:'Evaluating',checkpointing:'Saving checkpoint',completed:'Completed',stopped:'Stopped',failed:'Failed'};
   let phase=activeJob?(phases[job.phase]||'Starting'):(phases[job.status]||'');
+  if(['paused','pausing','stepping'].includes(job.status))phase=`${job.status==='paused'?'Paused':job.status==='pausing'?'Pausing…':'Single step'} · ${phase}`;
   const evaluation=job.evaluation_progress;
   if(job.phase==='evaluating'&&activeJob&&evaluation)phase+=` · episode ${evaluation.episode} / ${evaluation.episodes} · step ${evaluation.step} / ${evaluation.episode_length}`;
   $('training-phase').textContent=phase;
   const chartStarted=performance.now();chart('coverage-chart',trainingHistory,'mean_coverage','#e9b36c');chart('reward-chart',trainingHistory,'mean_step_reward','#8cb9cd');recordBrowser('charts',chartStarted);
+}
+function renderTrainingControls(job){
+  activeJob=['starting','running','pausing','paused','stepping','stopping'].includes(job.status);
+  $('start-training').disabled=activeJob;$('stop-training').disabled=!activeJob||job.status==='stopping';
+  const button=$('pause-training');
+  button.textContent=job.status==='paused'?'Resume':job.status==='pausing'?'Pausing…':'Pause';
+  button.disabled=!['running','paused'].includes(job.status);
+  button.setAttribute('aria-pressed',String(job.status==='paused'));
+  $('step-training').disabled=job.status!=='paused';
+}
+async function controlTraining(action){
+  const response=await api('/api/training/'+action,{});
+  trainingJob={...trainingJob,status:response.status};renderTrainingControls(trainingJob);
+  if(currentTab==='training')renderTraining();
 }
 async function poll(){
   try{
@@ -538,9 +553,9 @@ async function poll(){
     trainingJob=job;
     const previousStep=trainingHistory.at(-1)?.steps??-1;
     trainingHistory.push(...(job.samples||[]).filter(row=>row.steps>previousStep));trainingHistory=trainingHistory.slice(-2000);
-    activeJob=['starting','running','stopping'].includes(job.status);
+    renderTrainingControls(job);
     $('job-badge').textContent=job.status==='idle'?'Ready':job.status[0].toUpperCase()+job.status.slice(1);
-    $('connection-status').textContent='Local backend connected';$('start-training').disabled=activeJob;$('stop-training').disabled=!activeJob;
+    $('connection-status').textContent='Local backend connected';
     if(job.total_steps){$('progress-fill').style.width=Math.min(100,100*job.steps/job.total_steps)+'%';$('progress-text').textContent=`${(job.steps||0).toLocaleString()} / ${job.total_steps.toLocaleString()} steps · ${Number(job.steps_per_second||0).toFixed(1)} steps/s`;}
     if(currentTab==='training')renderTraining();
     diagnostics(job.metrics);timingDiagnostics(job.timings);
@@ -744,10 +759,12 @@ async function initialize() {
     });
     action('start-training',async()=>{
       const health=await api('/api/health');
-      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==5)throw Error('Restart OPUS to load live training readings and timing diagnostics.');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==6)throw Error('Restart OPUS to load training Pause and Step controls.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});
+    action('pause-training',()=>controlTraining(trainingJob.status==='paused'?'resume':'pause'));
+    action('step-training',()=>controlTraining('step'));
     action('refresh-runs',loadRuns);
     $('search-form').onsubmit=async event=>{
       event.preventDefault();try {

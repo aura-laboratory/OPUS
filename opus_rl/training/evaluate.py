@@ -23,7 +23,8 @@ def heuristic_action(env):
 
 
 def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
-             stop_event=None, include_frame=False, callback=None, trail_length_m=0, visual_history=None):
+             stop_event=None, include_frame=False, callback=None, trail_length_m=0, visual_history=None,
+             before_step=None):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
@@ -42,6 +43,8 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         averages = []
         for _ in range(scenario.horizon):
             if stop_event and stop_event.is_set():
+                break
+            if before_step and not before_step():
                 break
             if policy == "random":
                 action = env.action_space.sample()

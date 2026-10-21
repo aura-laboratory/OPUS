@@ -137,3 +137,26 @@ for(const policy of ['heuristic','random','model'])test(`Evaluate policy uses th
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   assert.match(html.slice(html.indexOf('id="simulation-controls"')).split('</div>')[0],/id="evaluate-policy"/);
 });
+
+test('Training controls distinguish pending pause, paused and one-step processing',async()=>{
+  const h=harness(),requests=[];
+  for(const [status,label,pauseDisabled,stepDisabled] of [
+    ['idle','Pause',true,true],['starting','Pause',true,true],['running','Pause',false,true],
+    ['pausing','Pausing…',true,true],['paused','Resume',false,false],
+    ['stepping','Pause',true,true],['stopping','Pause',true,true],['completed','Pause',true,true],
+  ]){
+    h.run(`renderTrainingControls({status:'${status}'})`);
+    assert.equal(h.nodes.get('pause-training').textContent,label);
+    assert.equal(h.nodes.get('pause-training').disabled,pauseDisabled);
+    assert.equal(h.nodes.get('step-training').disabled,stepDisabled);
+    assert.equal(h.nodes.get('start-training').disabled,!['idle','completed'].includes(status));
+  }
+  h.context.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>({status:'stepping'})};};
+  h.run('currentTab="mission";trainingJob={status:"paused",steps:7}');
+  await h.run('controlTraining("step")');
+  assert.deepEqual(requests,['/api/training/step']);
+  assert.equal(h.nodes.get('step-training').disabled,true,'prevent a second click while stepping');
+  assert.equal(h.run('trainingJob.steps'),7,'only backend telemetry may advance the step count');
+  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.match(html,/id="start-training"[\s\S]*?<\/div>\s*<div class="toolbar"><button id="pause-training"[\s\S]*?id="step-training"/);
+});

@@ -27,6 +27,7 @@ from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
 from opus_rl.simulation.history import VisualHistory
 from opus_rl.training.evaluate import evaluate, heuristic_action
+from opus_rl.training.control import TrainingControl
 from opus_rl.training.hardware import hardware_info, select_device
 from opus_rl.training.train import load_checkpoint, save_json, train
 
@@ -57,6 +58,7 @@ class State:
         self.simulation_steps = 0
         self.worker = None
         self.stop = threading.Event()
+        self.control = TrainingControl(self.stop)
         self.status = {"status": "idle", "history": []}
         self.samples = deque(maxlen=2000)
         self.evaluation_worker = None
@@ -83,7 +85,7 @@ class State:
             history = previous.get("history", [])
             if "metrics" in update:
                 history = (history + [update["metrics"]])[-1000:]
-            self.status = {**previous, **update, "status": "stopping" if self.stop.is_set() else "running",
+            self.status = {**previous, **update, "status": self.control.status,
                            "history": history}
 
     def run_directory(self, run_id):
@@ -116,7 +118,7 @@ def create_app(runs_root=None):
     @asynccontextmanager
     async def lifespan(app):
         yield
-        state.stop.set()
+        state.control.stop()
         state.evaluation_stop.set()
         if state.worker and state.worker.is_alive():
             await asyncio.to_thread(state.worker.join, 10)
@@ -145,7 +147,7 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 5,
+                "training_controls_revision": 6,
                 "test_controls_revision": 2,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
@@ -259,6 +261,7 @@ def create_app(runs_root=None):
             if approximate_bytes > 3 * 1024**3:
                 raise HTTPException(400, "Update interval exceeds the 3 GiB v1 memory budget; reduce the interval.")
             state.stop = threading.Event()
+            state.control = TrainingControl(state.stop)
             state.samples.clear()
             state.training_history.clear()
             state.status = {"status": "starting", "steps": 0, "total_steps": config.training.total_steps,
@@ -267,7 +270,7 @@ def create_app(runs_root=None):
 
             def work():
                 try:
-                    _, summary = train(config, state.runs_root, state.publish, state.stop)
+                    _, summary = train(config, state.runs_root, state.publish, state.stop, control=state.control)
                     with state.lock:
                         state.status.update(status=summary["status"], run_id=summary["run_id"],
                                             summary=summary, steps=summary["steps"])
@@ -283,10 +286,33 @@ def create_app(runs_root=None):
     @app.post("/api/training/stop")
     def stop():
         with state.lock:
-            state.stop.set()
+            state.control.stop()
             if state.worker and state.worker.is_alive():
                 state.status["status"] = "stopping"
             return {"status": state.status["status"]}
+
+    def training_control(action):
+        with state.lock:
+            if not state.worker or not state.worker.is_alive() or state.stop.is_set():
+                raise HTTPException(409, "No active training to control.")
+            try:
+                getattr(state.control, action)()
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from error
+            state.status["status"] = state.control.status
+            return {"status": state.status["status"]}
+
+    @app.post("/api/training/pause")
+    def pause_training():
+        return training_control("pause")
+
+    @app.post("/api/training/resume")
+    def resume_training():
+        return training_control("resume")
+
+    @app.post("/api/training/step")
+    def step_training():
+        return training_control("step")
 
     @app.get("/api/training/status")
     def status(after_step: int = -1, run_id: str = ""):
