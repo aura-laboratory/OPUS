@@ -113,7 +113,8 @@ def test_ema_fusion_and_zero_map_reward():
     coverage[:2, :2] = np.array([[0, 1], [0, 1]])
     fused = fuse(coverage, mask, 8)
     assert fused[1, 0, 0] == pytest.approx(0.5)
-    assert fused[2, 0, 0] == 0
+    assert fused.shape == (2, 8, 8)
+    assert fuse(coverage, mask, 8, include_p10=True)[2, 0, 0] == 0
     empty = metrics(np.zeros_like(coverage), mask)
     assert empty["fairness"] == 0
     total, terms = reward(ScenarioConfig().reward, empty, 1, 1, 1, 1)
@@ -137,7 +138,7 @@ def test_marginal_capture_matches_removing_each_camera_with_overlap_and_history(
         for slot, source in enumerate(order):
             remaining = np.delete(captures, source, axis=0).max(axis=0)
             without = metrics(update_coverage(previous, remaining, mask, 0.9), mask)
-            for key in ("mean", "fairness", "p10"):
+            for key in ("mean", "fairness"):
                 assert contributions[slot][key] == pytest.approx(full[key] - without[key])
         assert all(value == 0 for value in contributions[3].values())
 

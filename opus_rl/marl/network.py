@@ -36,11 +36,12 @@ class ActorCritic(nn.Module):
 
     algorithm = "ippo"
 
-    def __init__(self, hidden=128):
+    def __init__(self, hidden=128, map_channels=2):
         super().__init__()
         self.hidden = hidden
+        self.map_channels = map_channels
         self.map_encoder = nn.Sequential(
-            nn.Conv2d(3, 16, 5, stride=4, padding=2), nn.Tanh(),
+            nn.Conv2d(map_channels, 16, 5, stride=4, padding=2), nn.Tanh(),
             nn.Conv2d(16, 24, 3, stride=2, padding=1), nn.Tanh(),
             nn.AdaptiveAvgPool2d((4, 4)), nn.Flatten(), nn.Linear(24 * 4 * 4, hidden), nn.Tanh(),
         )
@@ -98,7 +99,7 @@ class LegacyActorCritic(ActorCritic):
     algorithm = "mappo"
 
     def __init__(self, station_slots, hidden=128):
-        super().__init__(hidden)
+        super().__init__(hidden, map_channels=3)
         self.station_slots = station_slots
         self.global_uavs = nn.Sequential(nn.Linear(OWN_DIM + station_slots + 1, hidden // 2), nn.Tanh())
         self.global_stations = nn.Sequential(nn.Linear(6, hidden // 2), nn.Tanh())

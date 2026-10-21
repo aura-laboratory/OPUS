@@ -116,7 +116,7 @@ def test_legacy_checkpoint_loading_preserves_policy_reward_and_global_rng(tmp_pa
     from opus_rl.marl.network import LegacyActorCritic
     from opus_rl.training.train import load_checkpoint
 
-    config = ExperimentConfig(scenario=small_config(), training=TrainConfig(hidden_size=32))
+    config = ExperimentConfig(scenario=small_config(observation_version=1), training=TrainConfig(hidden_size=32))
     env = OpusTeamEnv(config.scenario)
     observation = tensor_dict(stack_dict([pack_observation(env.reset(seed=2)[0])]), "cpu")
     original = LegacyActorCritic(env.s_max, 32)

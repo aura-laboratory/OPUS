@@ -51,7 +51,7 @@ def estimated_gpu_bytes(config):
     agents = sum(kind.available_count for kind in scenario.uav_types)
     others = max(1, agents - 1)
     frames = min(cfg.rollout_steps, cfg.total_steps)
-    frame_values = 3 * scenario.observation_size**2 + agents * (
+    frame_values = (3 if scenario.observation_version == 1 else 2) * scenario.observation_size**2 + agents * (
         OWN_DIM * (1 + others) + others + CONTEXT_DIM + 13)
     batch = min(cfg.batch_size, frames)
     activations = batch * (16 * scenario.observation_size**2 + agents * others * cfg.hidden_size)

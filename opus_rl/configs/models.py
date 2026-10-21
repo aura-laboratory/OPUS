@@ -2,7 +2,6 @@
 
 from typing import Literal
 
-import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -83,7 +82,6 @@ class StationType(Config):
 class RewardConfig(Config):
     mean_weight: float = Field(0.5, ge=0)
     fairness_weight: float = Field(0.4, ge=0)
-    p10_weight: float = Field(0.1, ge=0)
     energy_weight: float = Field(0.2, ge=0)
     projection_weight: float = Field(0.1, ge=0)
     collision_weight: float = Field(0.3, ge=0)
@@ -91,9 +89,15 @@ class RewardConfig(Config):
 
     @model_validator(mode="after")
     def coverage_sum(self):
-        if not np.isclose(self.mean_weight + self.fairness_weight + self.p10_weight, 1):
-            raise ValueError("Coverage weights must sum to one.")
+        if self.mean_weight + self.fairness_weight + getattr(self, 'p10_weight', 0) <= 0:
+            raise ValueError("Coverage weights must include a positive mean or fairness weight.")
         return self
+
+
+class LegacyRewardConfig(RewardConfig):
+    """Only retained when loading earlier scenarios and checkpoints."""
+
+    p10_weight: float = Field(0.1, ge=0)
 
 
 class ScenarioConfig(Config):
@@ -124,8 +128,22 @@ class ScenarioConfig(Config):
     required_gsd_m: float = Field(0.05, gt=0)
     grid_size: int = Field(1024, ge=16, le=2048)
     observation_size: int = Field(128, ge=8, le=256)
-    reward: RewardConfig = Field(default_factory=RewardConfig)
+    observation_version: Literal[1, 2] = 2
+    reward: RewardConfig | LegacyRewardConfig = Field(default_factory=RewardConfig)
     reward_mode: Literal["individual", "legacy_team"] = "individual"
+
+    @model_validator(mode="before")
+    @classmethod
+    def recognize_legacy_map(cls, data):
+        if isinstance(data, dict) and 'observation_version' not in data:
+            old_reward = data.get('reward', {})
+            if isinstance(old_reward, dict) and 'p10_weight' in old_reward:
+                data = {**data, 'observation_version': 1}
+        return data
+
+    def use_current_coverage(self):
+        self.reward = RewardConfig.model_validate(self.reward.model_dump(exclude={'p10_weight'}))
+        self.observation_version = 2
 
     @model_validator(mode="after")
     def consistent(self):

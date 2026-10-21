@@ -24,19 +24,23 @@ def heuristic_action(env):
 
 def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
              stop_event=None, include_frame=False, callback=None, trail_length_m=0, visual_history=None,
-             before_step=None):
+             before_step=None, on_start=None):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
+    steps, legacy_p10 = 0, []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
             break
         env = OpusTeamEnv(scenario)
         observation, info = env.reset(seed=seed + episode)
         env.action_space.seed(seed + episode)
+        if on_start and episode == 0:
+            on_start({'steps': 0, 'step': 0, 'episode': 1, 'telemetry': env.telemetry(),
+                      'frame': {**env.frame(), 'episode': 1}, 'frame_step': 0})
         trails = Trajectories()
         last_frame_at = time.perf_counter()
         if visual_history is not None and episode == 0:
             visual_history.append(0, 1, 0, env.telemetry(), env.frame())
-        if include_frame and episode == 0 and trail_length_m:
+        if include_frame and trail_length_m:
             trails.record(env)
         total = energy_used = collision_count = 0
         individual_returns = np.zeros(env.n_max)
@@ -57,17 +61,27 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
                 with torch.no_grad():
                     action = model.act(packed, deterministic=True)[0][0].cpu().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
-            if include_frame and episode == 0 and trail_length_m:
+            steps += 1
+            if include_frame and trail_length_m:
                 trails.record(env)
-            if visual_history is not None and episode == 0:
+            frame = None
+            if include_frame:
                 now = time.perf_counter()
-                frame = env.frame() if now - last_frame_at >= 1 or info["step"] == 1 or terminated or truncated else None
-                if frame is not None:
+                if now - last_frame_at >= 1 or info['step'] == 1 or terminated or truncated:
+                    frame = {**env.frame(), 'episode': episode + 1,
+                             'trails': trails.snapshot(env.step_index, trail_length_m)}
                     last_frame_at = now
+            if visual_history is not None and episode == 0:
                 visual_history.append(info["step"], 1, info["simulated_seconds"], env.telemetry(), frame)
             if callback:
+                sample = {'steps': steps, 'episode': episode + 1, 'episode_step': info['step'],
+                          'mean_coverage': info['coverage']['mean'], 'mean_step_reward': float(reward),
+                          'total_simulated_seconds': steps * scenario.delta_t}
+                live = {'telemetry': env.telemetry()} if include_frame else {}
+                if frame is not None:
+                    live.update(frame=frame, frame_step=steps)
                 callback({"episode": episode + 1, "episodes": episodes, "step": info["step"],
-                          "episode_length": scenario.horizon})
+                          "steps": steps, "episode_length": scenario.horizon, 'sample': sample, **live})
             total += reward
             individual_returns += info["uav_rewards"]
             averages.append(info["coverage"]["mean"])
@@ -82,8 +96,9 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         uav_returns.append({"seed": seed + episode, "uavs": [
             {"id": j, "inventory_index": uav.inventory_index, "name": uav.spec.name,
              "return": float(individual_returns[j])} for j, uav in enumerate(env.uavs)]})
-        coverages.append([float(np.mean(averages)) if averages else 0, info["coverage"]["p10"],
-                          info["coverage"]["fairness"]])
+        coverages.append([float(np.mean(averages)) if averages else 0, info["coverage"]["fairness"]])
+        if 'p10' in info['coverage']:
+            legacy_p10.append(info['coverage']['p10'])
         energy.append(energy_used)
         collisions.append(collision_count)
         crashes.append(info["crashed_uavs"])
@@ -95,11 +110,12 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         return {"episodes": 0}
     result = {"episodes": len(totals), "return_mean": float(np.mean(totals)),
               "return_std": float(np.std(totals)), "coverage_mean": float(np.mean(coverages, axis=0)[0]),
-              "p10_final": float(np.mean(coverages, axis=0)[1]),
-              "fairness_final": float(np.mean(coverages, axis=0)[2]), "energy_Wh": float(np.mean(energy)),
+              "fairness_final": float(np.mean(coverages, axis=0)[1]), "energy_Wh": float(np.mean(energy)),
               "collision_count": float(np.mean(collisions)), "crashed_uavs": float(np.mean(crashes)),
               "reward_mode": scenario.reward_mode, "uav_returns": uav_returns,
               "seeds": [seed + i for i in range(len(totals))]}
+    if legacy_p10:
+        result['p10_final'] = float(np.mean(legacy_p10))
     if frames:
         result["frame"] = frames[0]
     return result

@@ -174,7 +174,7 @@ def test_individual_capture_credit_padding_and_info_ownership(monkeypatch):
     from opus_rl.envs import team_env
 
     cfg = small_config(uav_types=[UAVType(available_count=3, fixed_count=2)], reward=RewardConfig(
-        mean_weight=1, fairness_weight=0, p10_weight=0, energy_weight=0, projection_weight=0,
+        mean_weight=1, fairness_weight=0, energy_weight=0, projection_weight=0,
         collision_weight=0, crash_weight=0))
     env = OpusTeamEnv(cfg)
     env.reset(seed=3)

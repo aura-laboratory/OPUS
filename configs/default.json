@@ -127,13 +127,13 @@
     "reward": {
       "mean_weight": 0.5,
       "fairness_weight": 0.4,
-      "p10_weight": 0.1,
       "energy_weight": 0.2,
       "projection_weight": 0.1,
       "collision_weight": 0.3,
       "crash_weight": 0.4
     },
-    "reward_mode": "individual"
+    "reward_mode": "individual",
+    "observation_version": 2
   },
   "training": {
     "total_steps": 10000,

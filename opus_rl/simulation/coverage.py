@@ -5,17 +5,19 @@ def update_coverage(current, instantaneous, mask, memory):
     return np.where(mask, memory * current + (1 - memory) * instantaneous, 0).astype(np.float32)
 
 
-def metrics(current, mask):
+def metrics(current, mask, include_p10=False):
     values = current[mask]
     total = float(values.sum(dtype=np.float64))
     squared = float(np.square(values.astype(np.float64)).sum())
     fairness = total**2 / (len(values) * squared + 1e-12) if squared > 0 else 0.0
-    return {"mean": float(values.mean()), "fairness": min(1.0, fairness),
-            "p10": float(np.percentile(values, 10)), "std": float(values.std()),
-            "fraction_above_0_1": float((values >= 0.1).mean())}
+    result = {"mean": float(values.mean()), "fairness": min(1.0, fairness),
+              "std": float(values.std()), "fraction_above_0_1": float((values >= 0.1).mean())}
+    if include_p10:
+        result['p10'] = float(np.percentile(values, 10))
+    return result
 
 
-def fuse(current, mask, observation_size):
+def fuse(current, mask, observation_size, include_p10=False):
     blocks = current.shape[0] // observation_size
     # Each row contains every cell of one block, so no poor-quality cell disappears by subsampling.
     values = current.reshape(observation_size, blocks, observation_size, blocks).transpose(0, 2, 1, 3)
@@ -25,6 +27,8 @@ def fuse(current, mask, observation_size):
     )
     count = valid.sum(axis=-1)
     mean = np.sum(values * valid, axis=-1) / np.maximum(1, count)
+    if not include_p10:
+        return np.stack([count / valid.shape[-1], mean]).astype(np.float32)
     # Sort padded cells to the end and linearly interpolate the exact within-AoI p10.
     ordered = np.sort(np.where(valid, values, np.inf), axis=-1)
     location = np.maximum(0, (count - 1) * 0.1)
@@ -38,7 +42,8 @@ def fuse(current, mask, observation_size):
 
 def reward(config, coverage, energy, projection, collision, crash):
     coverage_reward = config.mean_weight * coverage["mean"] + config.fairness_weight * coverage["fairness"]
-    coverage_reward += config.p10_weight * coverage["p10"]
+    # Earlier saved policies retain their original reward definition during testing.
+    coverage_reward += getattr(config, 'p10_weight', 0) * coverage.get('p10', 0)
     terms = {"coverage": float(coverage_reward), "energy": float(np.clip(energy, 0, 1)),
              "projection": float(np.clip(projection, 0, 1)), "collision": float(np.clip(collision, 0, 1)),
              "crash": float(np.clip(crash, 0, 1))}
@@ -55,8 +60,8 @@ def marginal_coverage(previous, current, runner_up, owners, mask, memory, slots,
     contains the best capture from the other UAVs. Tied maxima therefore earn
     zero marginal credit, independently of camera iteration order.
     """
-    keys = ("mean", "fairness", "p10")
     full_metrics = metrics(current, mask) if full_metrics is None else full_metrics
+    keys = tuple(key for key in ('mean', 'fairness', 'p10') if key in full_metrics)
     contributions = [dict.fromkeys(keys, 0.0) for _ in range(slots)]
     for index in np.unique(owners[mask]):
         if index < 0:
@@ -64,6 +69,6 @@ def marginal_coverage(previous, current, runner_up, owners, mask, memory, slots,
         changed = (owners == index) & mask
         counterfactual = current.copy()
         counterfactual[changed] = memory * previous[changed] + (1 - memory) * runner_up[changed]
-        without = metrics(counterfactual, mask)
+        without = metrics(counterfactual, mask, include_p10='p10' in full_metrics)
         contributions[index] = {key: full_metrics[key] - without[key] for key in keys}
     return contributions

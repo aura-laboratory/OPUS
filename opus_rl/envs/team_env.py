@@ -46,7 +46,7 @@ class OpusTeamEnv(gym.Env):
             "uav_own": spaces.Box(-1, 1, (self.n_max, OWN_DIM), np.float32),
             "other_uavs": spaces.Box(-1, 1, (self.n_max, other, OWN_DIM), np.float32),
             "other_uav_mask": spaces.MultiBinary((self.n_max, other)),
-            "map": spaces.Box(0, 1, (self.n_max, 3, self.config.observation_size,
+            "map": spaces.Box(0, 1, (self.n_max, 3 if self.config.observation_version == 1 else 2, self.config.observation_size,
                                      self.config.observation_size), np.float32),
             "active_mask": spaces.MultiBinary(self.n_max),
             "actor_training_mask": spaces.MultiBinary(self.n_max),
@@ -315,7 +315,7 @@ class OpusTeamEnv(gym.Env):
         phase_started = time.perf_counter()
         previous = self.coverage
         self.coverage = update_coverage(previous, instantaneous, self.area.mask, cfg.coverage_lambda)
-        coverage_metrics = metrics(self.coverage, self.area.mask)
+        coverage_metrics = metrics(self.coverage, self.area.mask, include_p10=cfg.observation_version == 1)
         contributions = marginal_coverage(previous, self.coverage, runner_up, owners, self.area.mask,
                                           cfg.coverage_lambda, self.n_max, coverage_metrics)
         n0 = len(self.uavs)
@@ -384,7 +384,7 @@ class OpusTeamEnv(gym.Env):
                             self.area.cell / (self.area.cell + 1), cfg.coverage_lambda,
                             min(1, self.step_index / cfg.horizon), cfg.min_altitude_m / cfg.max_altitude_m,
                             cfg.max_altitude_m / (cfg.max_altitude_m + 100)], np.float32)
-        shared = fuse(self.coverage, self.area.mask, cfg.observation_size)
+        shared = fuse(self.coverage, self.area.mask, cfg.observation_size, include_p10=cfg.observation_version == 1)
         return {"uav_own": own, "other_uavs": other, "other_uav_mask": other_mask,
                 "map": np.broadcast_to(shared, (self.n_max, *shared.shape)).copy(),
                 "active_mask": active, "actor_training_mask": actor,
@@ -415,7 +415,7 @@ class OpusTeamEnv(gym.Env):
                 "reward": total, "reward_terms": terms, "reward_mode": self.config.reward_mode,
                 "uav_rewards": self.uav_rewards.tolist(),
                 "uav_reward_terms": [item.copy() for item in self.uav_reward_terms],
-                "coverage": metrics(self.coverage, self.area.mask),
+                "coverage": metrics(self.coverage, self.area.mask, include_p10=self.config.observation_version == 1),
                 "actor_training_mask": actor_mask.tolist(), "energy_Wh": energies.tolist(),
                 "collision_pairs": collisions, "no_station_events": denied, "projection_sum": projection,
                 "uav_statuses": [u.status for u in self.uavs], "active_uavs": len(self.uavs),

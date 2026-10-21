@@ -38,13 +38,21 @@ def git_version():
 
 def load_checkpoint(path, device="cpu"):
     data = torch.load(path, map_location=device, weights_only=False)  # Only load local, trusted OPUS checkpoints.
-    config = ExperimentConfig.model_validate(data["config"])
+    raw_config = {**data['config'], 'scenario': dict(data['config']['scenario'])}
+    channels = data['model']['map_encoder.0.weight'].shape[1]
+    if channels not in (2, 3):
+        raise ValueError('Unsupported checkpoint map channels.')
+    raw_config['scenario']['observation_version'] = 1 if channels == 3 else 2
+    if channels == 3:
+        old_reward = raw_config['scenario'].get('reward', {})
+        raw_config['scenario']['reward'] = {'p10_weight': 0.1, **old_reward}
+    config = ExperimentConfig.model_validate(raw_config)
     algorithm = data.get("algorithm", "mappo")
     if algorithm not in ("ippo", "mappo"):
         raise ValueError(f"Unsupported checkpoint algorithm: {algorithm}.")
     config.scenario.reward_mode = "individual" if algorithm == "ippo" else "legacy_team"
     with MODEL_INIT_LOCK, torch.random.fork_rng(devices=[]):
-        model = (ActorCritic(config.training.hidden_size) if algorithm == "ippo" else LegacyActorCritic(
+        model = (ActorCritic(config.training.hidden_size, map_channels=channels) if algorithm == "ippo" else LegacyActorCritic(
             sum(t.available_count for t in config.scenario.station_types), config.training.hidden_size))
     model.load_state_dict(data["model"])
     model.to(device).eval()
@@ -56,6 +64,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     setup_started = time.perf_counter()
     config = config.model_copy(deep=True)
     config.scenario.reward_mode = "individual"  # New runs always use IPPO, including from legacy run configs.
+    config.scenario.use_current_coverage()
     cfg = config.training
     hardware = hardware_info()
     cfg.torch_threads = min(cfg.torch_threads, hardware["cpu_threads"])
@@ -71,7 +80,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
     save_json(directory / "normalization.json", {"method": "fixed physical feature scales; no running statistics",
                "algorithm": "parameter-sharing IPPO", "value": "one local value estimate per UAV observation",
                "reward": "signed marginal capture contribution minus individual costs",
-               "map": "occupancy fraction, mean and p10 quality", "actions": "tanh Gaussian in [-1,1]",
+               "map": "occupancy fraction and mean quality", "actions": "tanh Gaussian in [-1,1]",
                "map_buffer_dtype": "float16, encoded once per environment per transition"})
     torch.set_num_threads(cfg.torch_threads)
     rng = np.random.default_rng(cfg.seed)
@@ -123,7 +132,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                     "config": config.model_dump(), "steps": steps, "version": __version__,
                     "agent_steps": agent_steps,
-                    "algorithm": "ippo", "checkpoint_format": 2,
+                    "algorithm": "ippo", "checkpoint_format": 3,
                     "git_commit": summary["git_commit"], "torch_rng": action_rng.get_state(),
                     "numpy_rng": rng.bit_generator.state}, temporary)
         temporary.replace(target)
@@ -148,7 +157,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 "crash", "energy_Wh", "actor_executed", "battery_ratio", "simulated_seconds"])
             uav_writer.writeheader()
             step_writer = csv.DictWriter(step_file, fieldnames=["steps", "episode", "episode_step", "episode_length",
-                "simulated_seconds", "total_simulated_seconds", "mean_coverage", "p10", "fairness",
+                "simulated_seconds", "total_simulated_seconds", "mean_coverage", "fairness",
                 "mean_step_reward", "energy_Wh", "crashed_uavs", "collision_pairs"])
             step_writer.writeheader()
             timing_writer = csv.DictWriter(timing_file, fieldnames=["steps", "phase", "calls", "seconds",
@@ -202,7 +211,7 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                         sample = {"steps": steps, "episode": episode + 1, "episode_step": info["step"],
                             "episode_length": config.scenario.horizon, "simulated_seconds": info["simulated_seconds"],
                             "total_simulated_seconds": steps * config.scenario.delta_t,
-                            "mean_coverage": info["coverage"]["mean"], "p10": info["coverage"]["p10"],
+                            "mean_coverage": info["coverage"]["mean"],
                             "fairness": info["coverage"]["fairness"], "mean_step_reward": float(individual[:count].mean()),
                             "energy_Wh": energies[-1], "crashed_uavs": info["crashed_uavs"],
                             "collision_pairs": len(info["collision_pairs"])}

@@ -42,6 +42,99 @@ def finished_evaluation(client):
     pytest.fail('Evaluation did not finish.')
 
 
+def wait_for_paused_evaluation(client):
+    for _ in range(300):
+        status = client.get('/api/evaluation/status').json()
+        if status['status'] == 'paused':
+            return status
+        assert status['status'] not in ('completed', 'failed', 'stopped'), status
+        time.sleep(0.01)
+    pytest.fail('Evaluation did not pause.')
+
+
+def hold_first_evaluation_step(monkeypatch):
+    seen, release = threading.Event(), threading.Event()
+    original = server.evaluate
+
+    def held(*args, **kwargs):
+        callback = kwargs['callback']
+
+        def progress(update):
+            callback(update)
+            if update['steps'] == 1:
+                seen.set()
+                assert release.wait(5)
+
+        return original(*args, **{**kwargs, 'callback': progress})
+
+    monkeypatch.setattr(server, 'evaluate', held)
+    return seen, release
+
+
+@pytest.mark.parametrize('policy', ['model', 'heuristic', 'random'])
+def test_evaluation_pause_continues_same_episode_and_streams_distinct_graph_samples(tmp_path, saved_run, monkeypatch, policy):
+    config, _ = saved_run
+    seen, release = hold_first_evaluation_step(monkeypatch)
+    app = server.create_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post('/api/evaluation/pause', json={}).status_code == 409
+        route = '/api/runs/saved/evaluation/start' if policy == 'model' else '/api/evaluation/start'
+        request = {'policy': policy, 'episodes': 2, 'seed': 123, 'scenario': config.scenario.model_dump()}
+        assert client.post(route, json=request).status_code == 200
+        try:
+            assert seen.wait(5)
+            assert client.post('/api/evaluation/pause', json={}).json()['status'] == 'pausing'
+        finally:
+            release.set()
+        paused = wait_for_paused_evaluation(client)
+        assert paused['steps'] == paused['step'] == paused['episode'] == 1
+        assert len(paused['samples']) == 1 and paused['telemetry']['info']['step'] == 1
+        history = client.get('/api/visualization/history/test', params={
+            'step': 1, 'timeline_id': paused['timeline']['id']}).json()
+        assert history['info']['step'] == 1
+        assert client.post(route, json=request).status_code == 409
+        assert client.get('/api/training/status').json()['samples'] == []
+        assert client.post('/api/evaluation/resume', json={}).json()['status'] == 'running'
+        first = finished_evaluation(client)
+        samples = first['samples']
+        assert [row['steps'] for row in samples] == list(range(1, 13))
+        assert [row['episode'] for row in samples] == [1] * 6 + [2] * 6
+        assert first['frame']['episode'] == 2 and first['frame']['info']['step'] == 6
+        assert first['result']['frame']['episode'] == 1  # Export preserves the first completed episode.
+        assert first['timeline']['last_step'] == 12
+        unseen = client.get('/api/evaluation/status', params={'after_step': 11, 'job_id': first['job_id']}).json()
+        assert [row['steps'] for row in unseen['samples']] == [12]
+        assert client.post('/api/evaluation/resume', json={}).status_code == 409
+        assert client.post(route, json=request).status_code == 200
+        repeated = finished_evaluation(client)
+        assert repeated['samples'] == samples
+        assert repeated['result']['uav_returns'] == first['result']['uav_returns']
+        if policy == 'model':
+            assert client.post('/api/runs/saved/delete', json={}).status_code == 200
+            cleared = client.get('/api/evaluation/status').json()
+            assert cleared['status'] == 'idle' and cleared['samples'] == []
+            assert 'timeline' not in cleared
+
+
+@pytest.mark.parametrize('finish', ['stop', 'shutdown'])
+def test_paused_evaluation_wakes_on_stop_or_shutdown(tmp_path, saved_run, monkeypatch, finish):
+    seen, release = hold_first_evaluation_step(monkeypatch)
+    app = server.create_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post('/api/runs/saved/evaluation/start', json={'episodes': 2}).status_code == 200
+        try:
+            assert seen.wait(5)
+            client.post('/api/evaluation/pause', json={})
+        finally:
+            release.set()
+        wait_for_paused_evaluation(client)
+        if finish == 'stop':
+            assert client.post('/api/evaluation/stop', json={}).json()['status'] == 'stopping'
+            assert finished_evaluation(client)['result']['episodes'] == 0
+    assert not app.state.opus.evaluation_worker.is_alive()
+    assert app.state.opus.evaluation_status['status'] == 'stopped'
+
+
 def test_run_display_name_export_and_safe_deletion(tmp_path, saved_run):
     _, directory = saved_run
     sentinel = tmp_path / 'keep.txt'

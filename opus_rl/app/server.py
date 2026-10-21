@@ -63,6 +63,8 @@ class State:
         self.samples = deque(maxlen=2000)
         self.evaluation_worker = None
         self.evaluation_stop = threading.Event()
+        self.evaluation_control = TrainingControl(self.evaluation_stop)
+        self.evaluation_samples = deque(maxlen=2000)
         self.evaluation_status = {"status": "idle"}
         self.evaluation_history = None
         self.geocode_lock = asyncio.Lock()
@@ -119,7 +121,7 @@ def create_app(runs_root=None):
     async def lifespan(app):
         yield
         state.control.stop()
-        state.evaluation_stop.set()
+        state.evaluation_control.stop()
         if state.worker and state.worker.is_alive():
             await asyncio.to_thread(state.worker.join, 10)
         if state.evaluation_worker and state.evaluation_worker.is_alive():
@@ -147,8 +149,8 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 6,
-                "test_controls_revision": 2,
+                "training_controls_revision": 7,
+                "test_controls_revision": 3,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -252,11 +254,12 @@ def create_app(runs_root=None):
                 raise HTTPException(409, "An experiment is already running.")
             # Validate all geometry and inventory before creating a background job.
             config.scenario.reward_mode = "individual"
+            config.scenario.use_current_coverage()
             select_device(config)
             env = OpusTeamEnv(config.scenario)
             env.reset(seed=config.training.seed)
             approximate_bytes = config.training.rollout_steps * (
-                3 * config.scenario.observation_size**2 * 2 + env.n_max**2 * 49 * 4 + 4096
+                2 * config.scenario.observation_size**2 * 2 + env.n_max**2 * 49 * 4 + 4096
             )
             if approximate_bytes > 3 * 1024**3:
                 raise HTTPException(400, "Update interval exceeds the 3 GiB v1 memory budget; reduce the interval.")
@@ -293,7 +296,8 @@ def create_app(runs_root=None):
 
     def training_control(action):
         with state.lock:
-            if not state.worker or not state.worker.is_alive() or state.stop.is_set():
+            if (not state.worker or not state.worker.is_alive() or state.stop.is_set()
+                    or state.status['status'] in ('completed', 'stopped', 'failed')):
                 raise HTTPException(409, "No active training to control.")
             try:
                 getattr(state.control, action)()
@@ -368,6 +372,8 @@ def create_app(runs_root=None):
                 state.test_history.clear()
             if state.evaluation_status.get("run_id") == run_id:
                 state.evaluation_status = {"status": "idle"}
+                state.evaluation_samples.clear()
+                state.evaluation_history = None
         return {"deleted": run_id}
 
     @app.get("/api/runs/{run_id}/config")
@@ -401,6 +407,8 @@ def create_app(runs_root=None):
         model, config, _ = load_checkpoint(directory / filename)
         scenario = body.scenario or config.scenario
         scenario.reward_mode = config.scenario.reward_mode
+        scenario.observation_version = config.scenario.observation_version
+        scenario.reward = config.scenario.reward
         if model.algorithm == "mappo" and sum(t.available_count for t in scenario.station_types) != model.station_slots:
             raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
         seed = body.seed if body.seed is not None else config.training.seed + 10000
@@ -414,6 +422,10 @@ def create_app(runs_root=None):
             if state.evaluation_worker and state.evaluation_worker.is_alive():
                 raise HTTPException(409, "An evaluation is already running.")
             state.evaluation_stop = threading.Event()
+            state.evaluation_control = TrainingControl(state.evaluation_stop)
+            state.evaluation_samples.clear()
+            visual_history = VisualHistory()
+            state.evaluation_history = visual_history
             state.evaluation_status = {"status": "running", "job_id": uuid4().hex,
                 "run_id": directory.name if directory else None,
                 "checkpoint": body.checkpoint if directory else None, "policy": body.policy,
@@ -422,20 +434,38 @@ def create_app(runs_root=None):
 
             def progress(update):
                 with state.lock:
-                    state.evaluation_status.update(**update, elapsed_seconds=time.perf_counter() - started)
+                    update = update.copy()
+                    sample = update.pop('sample', None)
+                    if sample is not None:
+                        state.evaluation_samples.append(sample)
+                        visual_history.append(sample['steps'], sample['episode'], sample['total_simulated_seconds'],
+                                              update['telemetry'], update.get('frame'))
+                    elif 'frame' in update:
+                        visual_history.append(0, 1, 0, update['telemetry'], update['frame'])
+                    if update.get('frame') is not None:
+                        update['frame'] = visual_history.frame(update['steps'], body.trail_length_m)
+                    state.evaluation_status.update(**update, status=state.evaluation_control.status,
+                        elapsed_seconds=time.perf_counter() - started,
+                        paused_seconds=state.evaluation_control.paused_seconds)
+
+            def gate():
+                return state.evaluation_control.wait(lambda: progress({}))
 
             def work():
                 try:
-                    visual_history = VisualHistory()
                     result = evaluate(scenario, model, body.episodes, seed=body.seed or 0, policy=body.policy,
                         stop_event=state.evaluation_stop, include_frame=True, callback=progress,
-                        trail_length_m=body.trail_length_m, visual_history=visual_history)
+                        trail_length_m=body.trail_length_m, before_step=gate, on_start=progress)
+                    if result.get('frame'):
+                        # Retain the first completed episode in exported evaluation results.
+                        first_steps = [key for key, record in visual_history.records.items() if record['episode'] == 1]
+                        if first_steps:
+                            result['frame'] = visual_history.frame(first_steps[-1], body.trail_length_m)
                     if directory and result.get("episodes"):
                         save_json(directory / "evaluation-manual.json", {
                             **{key: value for key, value in result.items() if key != "frame"},
                             "checkpoint": body.checkpoint, "policy": body.policy})
                     with state.lock:
-                        state.evaluation_history = visual_history if result.get("frame") else None
                         state.evaluation_status.update(status="stopped" if state.evaluation_stop.is_set()
                             else "completed", result=result, elapsed_seconds=time.perf_counter() - started)
                 except Exception as error:
@@ -458,6 +488,8 @@ def create_app(runs_root=None):
             model, config, _ = load_checkpoint(directory / body.checkpoint)
             scenario = body.scenario or config.scenario
             scenario.reward_mode = config.scenario.reward_mode
+            scenario.observation_version = config.scenario.observation_version
+            scenario.reward = config.scenario.reward
             if model.algorithm == "mappo" and sum(t.available_count for t in scenario.station_types) != model.station_slots:
                 raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
             body = body.model_copy(update={"seed": body.seed if body.seed is not None else config.training.seed + 10000})
@@ -470,14 +502,36 @@ def create_app(runs_root=None):
         return start_evaluation(body.scenario, None, body)
 
     @app.get("/api/evaluation/status")
-    def evaluation_status():
+    def evaluation_status(after_step: int = -1, job_id: str = ''):
         with state.lock:
-            return state.evaluation_status.copy()
+            result = state.evaluation_status.copy()
+            cursor = after_step if job_id == result.get('job_id') else -1
+            result['samples'] = [row for row in state.evaluation_samples if row['steps'] > cursor]
+            if state.evaluation_history:
+                result['timeline'] = state.evaluation_history.metadata()
+            return result
+
+    def evaluation_control(action):
+        with state.lock:
+            if (not state.evaluation_worker or not state.evaluation_worker.is_alive() or state.evaluation_stop.is_set()
+                    or state.evaluation_status['status'] in ('completed', 'stopped', 'failed')):
+                raise HTTPException(409, 'No active evaluation to control.')
+            getattr(state.evaluation_control, action)()
+            state.evaluation_status['status'] = state.evaluation_control.status
+            return {'status': state.evaluation_status['status']}
+
+    @app.post('/api/evaluation/pause')
+    def pause_evaluation():
+        return evaluation_control('pause')
+
+    @app.post('/api/evaluation/resume')
+    def resume_evaluation():
+        return evaluation_control('resume')
 
     @app.post("/api/evaluation/stop")
     def stop_evaluation():
         with state.lock:
-            state.evaluation_stop.set()
+            state.evaluation_control.stop()
             if state.evaluation_worker and state.evaluation_worker.is_alive():
                 state.evaluation_status["status"] = "stopping"
             return {"status": state.evaluation_status["status"]}
