@@ -47,7 +47,7 @@ class TrainingControl:
 
     def step(self):
         with self.condition:
-            if not self.paused or not self.waiting or self.permits:
+            if not self.paused or not self.waiting or self.permits or self.stepping:
                 raise ValueError("Pause training and wait for Paused before stepping.")
             self.permits = 1
             self.condition.notify_all()

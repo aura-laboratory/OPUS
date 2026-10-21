@@ -535,7 +535,7 @@ function renderTrainingControls(job){
   button.textContent=job.status==='paused'?'Resume':job.status==='pausing'?'Pausing…':'Pause';
   button.disabled=!['running','paused'].includes(job.status);
   button.setAttribute('aria-pressed',String(job.status==='paused'));
-  $('step-training').disabled=job.status!=='paused';
+  $('step-training').disabled=job.status!=='paused'||Boolean(job.total_steps&&job.steps>=job.total_steps);
 }
 async function controlTraining(action){
   const response=await api('/api/training/'+action,{});

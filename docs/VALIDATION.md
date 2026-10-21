@@ -122,6 +122,14 @@ All **64 Python tests** and **8 Node interface logic tests** pass. New checks co
 
 Ruff and JavaScript syntax checks pass. OPUS was not launched. Rendering/layout and interactive slider motion still require a running-browser check; Node tests validate the control logic only. Visual history is session-only and capped at 10,000 completed steps, with map refresh granularity separate from per-step UAV readings.
 
+## Training pause and policy controls: 2026-10-21
+
+All **72 Python tests** and **12 Node interface logic tests** pass, with Ruff, both JavaScript syntax checks and whitespace checks. Training-control checks cover one-interaction permits across update/evaluation boundaries, preserving rollout data, exact final weights versus uninterrupted training, stop/save while paused, shutdown waking a paused worker, final-budget completion by single-stepping, current single-step map frames, and pausing/resuming scheduled evaluation including the final evaluation. A controlled-clock check confirms that an idle pause inside evaluation does not inflate its measured duration or processing-time share.
+
+Interface checks cover Pause/Resume/Step availability and command routing, evaluation of each selected policy (circular, random, named saved model), and removal of percentile readouts from live/evaluation results. Reward coefficients and observation encoding are unchanged pending the reward-design decision. Processing-time percentages use cumulative measured top-level processing, excluding paused waiting; nested camera/simulator rows are parts of that total.
+
+The application server was not launched or restarted. These checks use bounded training, TestClient and Node logic tests; rendered-browser layout remains unverified. Changes are recorded in progressive Git commits with comments on control boundaries, timing exclusion and lock ordering.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

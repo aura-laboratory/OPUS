@@ -225,7 +225,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                         with timings.measure("telemetry"):
                             latest_telemetry = env.telemetry()
                             frame = {}
-                            if now - last_frame_at >= 1 or info["step"] == 1 or term or trunc or steps == cfg.total_steps:
+                            if (now - last_frame_at >= 1 or info["step"] == 1 or term or trunc
+                                    or steps == cfg.total_steps or control.status in ("pausing", "stepping")):
                                 interval = steps - last_frame_step
                                 frame = {"frame": env.frame(), "frame_step": steps,
                                          "frame_step_delta": interval,
@@ -282,11 +283,13 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 evaluation = None
                 if steps >= next_evaluation and not stop_event.is_set():
                     publish("evaluating", evaluation_progress=None)
+                    finish_single_step = steps >= cfg.total_steps and control.status == "stepping"
                     with timings.measure("evaluation", gpu=True):
                         evaluation = evaluate(config.scenario, model, cfg.evaluation_episodes,
                             seed=cfg.seed + 10000, device=device, stop_event=stop_event,
                             callback=(lambda progress: publish("evaluating", evaluation_progress=progress))
-                            if callback else None, before_step=lambda: gate("evaluating"))
+                            if callback else None,
+                            before_step=None if finish_single_step else lambda: gate("evaluating"))
                     if evaluation.get("episodes", 0):
                         clean = {key: value for key, value in evaluation.items() if key != "frame"}
                         summary["evaluation"] = clean

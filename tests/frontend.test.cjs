@@ -159,6 +159,9 @@ test('Training controls distinguish pending pause, paused and one-step processin
   assert.deepEqual(requests,['/api/training/step']);
   assert.equal(h.nodes.get('step-training').disabled,true,'prevent a second click while stepping');
   assert.equal(h.run('trainingJob.steps'),7,'only backend telemetry may advance the step count');
+  h.run('renderTrainingControls({status:"paused",steps:10,total_steps:10})');
+  assert.equal(h.nodes.get('step-training').disabled,true,'final evaluation can resume, with no training steps remaining');
+  assert.equal(h.nodes.get('pause-training').disabled,false);
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   assert.match(html,/id="start-training"[\s\S]*?<\/div>\s*<div class="toolbar"><button id="pause-training"[\s\S]*?id="step-training"/);
 });
