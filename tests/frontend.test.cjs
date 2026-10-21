@@ -120,3 +120,20 @@ test('Evaluation has visible progress and persistent results rather than just a 
   assert.equal(h.nodes.get('stop-evaluation').hidden,true);
   h.run('updateWorkspaceVisibility()');assert.equal(h.nodes.get('evaluation-panel').hidden,false);
 });
+
+for(const policy of ['heuristic','random','model'])test(`Evaluate policy uses the selected ${policy} policy`,async()=>{
+  const h=harness(),requests=[];
+  h.nodes.get('evaluation-panel').scrollIntoView=()=>{};
+  h.nodes.get('simulation-policy').value=policy;
+  h.context.fetch=async(url,options)=>{requests.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>({status:'running'})};};
+  h.run('testBackendReady=true;testSettings=()=>({episodes:3,seed:42,trail_length_m:500});checkFields=async()=>true;renderEvaluation=()=>{};config={scenario:{name:"Mission"}};selectedRun={run_id:"saved",checkpoint:"final.pt"}');
+  await h.run('startEvaluation()');
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].body.policy,policy);
+  assert.equal(requests[0].url,policy==='model'?'/api/runs/saved/evaluation/start':'/api/evaluation/start');
+  assert.equal(requests[0].body.episodes,3);
+  if(policy==='model')assert.equal(requests[0].body.checkpoint,'final.pt');
+  else assert.equal(requests[0].body.scenario.name,'Mission');
+  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.match(html.slice(html.indexOf('id="simulation-controls"')).split('</div>')[0],/id="evaluate-policy"/);
+});

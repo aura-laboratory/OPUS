@@ -98,7 +98,8 @@ const fieldHelp = {
   energy_Wh_per_step:'Mean fleet energy consumed per environment decision during this rollout.',
   reward_projection:'Mean normalized action-correction penalty before applying its weight.',
   reward_collision:'Fraction of UAV transitions involving a collision in this rollout.',
-  reward_crash:'Fraction of UAV transitions spent crashed in this rollout.'
+  reward_crash:'Fraction of UAV transitions spent crashed in this rollout.',
+  evaluate_policy:'Evaluate the policy selected beside this button: the named loaded model, Circular baseline or Random actions. Uses the evaluation episode count and seed from Testing.'
 };
 
 function attachFieldHelp(element,key,extra='') {

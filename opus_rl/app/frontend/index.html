@@ -61,7 +61,6 @@
         <label class="field" data-reading-help="test_episodes"><span>Evaluation episodes</span><span class="value-box"><input id="test-episodes" type="number" value="5" min="1" max="100" step="1"></span><small class="field-error" hidden></small></label>
         <label class="field" data-reading-help="test_seed"><span>Seed</span><span class="value-box"><input id="test-seed" type="number" value="42" min="0" max="2147483647" step="1"></span><small class="field-error" hidden></small></label>
       </div>
-      <button id="evaluate-policy" class="full">Evaluate policy</button>
     </div>
     <div class="group"><h2>Saved runs <button id="refresh-runs" class="text-button">Refresh</button></h2><div id="run-list"></div></div>
   </section>
@@ -75,7 +74,7 @@
     <div id="episode-counter" class="muted" data-tabs="training" data-reading-help="episode_counter" hidden></div>
     <div class="replay-controls" id="simulation-controls" data-tabs="test" hidden>
       <label class="sr-only" for="simulation-policy">Test policy</label><select id="simulation-policy"><option value="heuristic">Circular baseline</option><option value="random">Random actions</option><option value="model" disabled hidden>Model</option></select>
-      <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button>
+      <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button><button id="evaluate-policy" data-reading-help="evaluate_policy">Evaluate policy</button>
     </div>
   </div>
   <div id="timeline-controls" class="timeline" data-tabs="training test" data-reading-help="timeline" hidden>
