@@ -48,7 +48,7 @@ test('Mission shows setup only; Test owns playback and Training retains metrics'
   h.run('setTab("test")');
   assert.equal(h.nodes.get('simulation-controls').hidden,false);
   assert.equal(h.nodes.get('live-metrics').hidden,false);
-  assert.equal(h.nodes.get('charts').hidden,true);
+  assert.equal(h.nodes.get('charts').hidden,false);
   await Promise.resolve();
 });
 
@@ -164,4 +164,41 @@ test('Training controls distinguish pending pause, paused and one-step processin
   assert.equal(h.nodes.get('pause-training').disabled,false);
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   assert.match(html,/id="start-training"[\s\S]*?<\/div>\s*<div class="toolbar"><button id="pause-training"[\s\S]*?id="step-training"/);
+});
+
+test('Test charts retain per-step samples across episodes and reset for a new playback',()=>{
+  const h=harness(),draws=[];h.context.draws=draws;
+  h.run('chart=(id,rows,key)=>draws.push({id,steps:rows.map(row=>row.steps),key});trainingHistory=[{steps:999}];currentTab="mission"');
+  h.run('recordTestFrame({timeline:{id:"one",last_step:1},episode:1,info:{coverage:{mean:0.2},reward:0.1}});recordTestFrame({timeline:{id:"one",last_step:2},episode:2,info:{coverage:{mean:0.3},reward:0.2}});currentTab="test";renderTestPlots()');
+  assert.deepEqual(Array.from(draws[0].steps),[1,2]);
+  assert.deepEqual(Array.from(h.run('testHistory.map(row=>row.episode)')),[1,2]);
+  assert.equal(draws[0].key,'mean_coverage');assert.equal(draws[1].key,'mean_step_reward');
+  h.run('recordTestFrame({timeline:{id:"new",last_step:0},episode:1,info:{coverage:{mean:0},reward:0}})');
+  assert.deepEqual(Array.from(h.run('testHistory.map(row=>row.steps)')),[0]);
+});
+
+test('Evaluation charts deduplicate polled steps and stay separate from playback and training',()=>{
+  const h=harness();
+  h.run('currentTab="mission";testPlotSource="evaluation";trainingHistory=[{steps:999}];testHistory=[{steps:888}];acceptEvaluation({job_id:"first",status:"running",samples:[{steps:1,episode:1},{steps:2,episode:1}]});acceptEvaluation({job_id:"first",status:"running",samples:[{steps:2,episode:1},{steps:3,episode:2}]})');
+  assert.deepEqual(Array.from(h.run('evaluationHistory.map(row=>row.steps)')),[1,2,3]);
+  assert.equal(h.run('trainingHistory[0].steps'),999);assert.equal(h.run('testHistory[0].steps'),888);
+  h.run('acceptEvaluation({job_id:"second",status:"running",samples:[{steps:1,episode:1}]})');
+  assert.deepEqual(Array.from(h.run('evaluationHistory.map(row=>row.steps)')),[1]);
+});
+
+test('Evaluation Pause becomes Continue and preserves graphs when resumed',async()=>{
+  const h=harness(),requests=[];
+  h.context.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>({status:url.endsWith('/resume')?'running':'paused'})};};
+  h.run('currentTab="test";testPlotSource="evaluation";evaluationHistory=[{steps:1,episode:1,mean_coverage:0.2,mean_step_reward:0.1}];testEvaluation={job_id:"one",status:"paused",episode:1,step:1,episodes:2,episode_length:6};renderEvaluation()');
+  assert.equal(h.nodes.get('pause-evaluation').textContent,'Continue');
+  assert.equal(h.nodes.get('play-simulation').disabled,true);
+  await h.run('controlEvaluation("resume")');
+  assert.equal(h.nodes.get('pause-evaluation').textContent,'Pause');
+  await h.run('controlEvaluation("pause")');
+  assert.equal(h.nodes.get('pause-evaluation').textContent,'Continue');
+  assert.equal(h.run('evaluationHistory.length'),1);
+  assert.deepEqual(requests,['/api/evaluation/resume','/api/evaluation/pause']);
+  h.run('testEvaluation={job_id:"one",status:"completed",result:{episodes:0}};renderEvaluation()');
+  assert.equal(h.nodes.get('pause-evaluation').hidden,true);
+  assert.equal(h.nodes.get('play-simulation').disabled,false);
 });

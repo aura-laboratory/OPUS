@@ -56,7 +56,6 @@ const fieldHelp = {
   target_kl:'Approximate limit on how far the updated policy moves from the rollout policy. Crossing it stops the remaining update passes. It is a stability threshold, not a target reward.',
   mean_weight:'Weight of the mean-quality difference caused by this UAV’s capture. The three coverage weights must sum to 1.',
   fairness_weight:'Weight of the Jain-fairness difference caused by this UAV’s capture. It can be negative even when some coverage improves.',
-  p10_weight:'Weight of the change in the 10th-percentile cell quality. It favours improvement in poorly covered regions.',
   energy_weight:'Penalty weight for this UAV’s normalized energy use, including automatic flight phases.',
   projection_weight:'Penalty weight for correction of this UAV’s proposed action to its feasible flight envelope.',
   collision_weight:'Penalty weight for a collision involving this UAV. Uninvolved UAVs receive no collision penalty.',
@@ -99,7 +98,10 @@ const fieldHelp = {
   reward_crash:'Fraction of UAV transitions spent crashed in this rollout.',
   pause_training:'Pause training after the current operation finishes. Resume continues the same rollout, model and episode. Paused time is excluded from processing-time percentages and steps/s.',
   step_training:'While paused, advance exactly one training environment step, with all UAVs acting together. Pending weight updates or scheduled evaluation may run first. Training then pauses again; the final step completes the run.',
-  evaluate_policy:'Evaluate the policy selected beside this button: the named loaded model, Circular baseline or Random actions. Uses the evaluation episode count and seed from Testing.'
+  evaluate_policy:'Evaluate the policy selected beside this button: the named loaded model, Circular baseline or Random actions. Uses the evaluation episode count and seed from Testing.',
+  pause_evaluation:'Pause evaluation after the current interaction finishes. Continue resumes the same episode and preserves collected results. Stop also works while paused.',
+  test_coverage_plot:'Current mean AoI coverage at every playback or evaluation interaction. Lines break between episodes. The latest 2,000 steps are shown; these are separate from training samples and final evaluation averages.',
+  test_reward_plot:'Reward at every playback or evaluation interaction, averaged across UAVs for IPPO. Earlier MAPPO models use their original team reward. Lines break between episodes; the latest 2,000 steps are shown.'
 };
 
 function attachFieldHelp(element,key,extra='') {

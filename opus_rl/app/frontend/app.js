@@ -7,6 +7,7 @@ const viewFrames = {mission:null,test:null};
 const timelineViews={training:newTimelineView(),test:newTimelineView()};
 function newTimelineView(){return {live:true,id:'',step:0,frame:null,sequence:0,dragging:false,timer:null,requesting:false};}
 let selectedRun=null, testBackendReady=false, testEvaluation={status:'idle'}, evaluationResultKey='', pendingDelete=null;
+let testHistory=[],testSeriesId='',testPlotSource='playback',evaluationHistory=[],evaluationJobId='',evaluationMapKey='';
 let fitRequest=0, forceMapFit=false;
 const browserTimes={map:{calls:0,total:0,last:0},readings:{calls:0,total:0,last:0},charts:{calls:0,total:0,last:0}};
 function recordBrowser(name,started){if(currentTab!=='training')return;const row=browserTimes[name];row.calls++;row.last=performance.now()-started;row.total+=row.last;}
@@ -41,7 +42,7 @@ const fields = {
   hidden_size:['Network width','neurons'], target_kl:['Target KL',''],
   min_uavs:['Minimum UAVs',''], max_uavs:['Maximum UAVs',''],
   min_stations:['Minimum docks',''], max_stations:['Maximum docks',''],
-  mean_weight:['Mean quality',''], fairness_weight:['Fairness',''], p10_weight:['10th percentile',''],
+  mean_weight:['Mean quality',''], fairness_weight:['Fairness',''],
   energy_weight:['Energy',''], projection_weight:['Action projection',''],
   collision_weight:['Collision',''], crash_weight:['Crash','']
 };
@@ -54,7 +55,7 @@ function errorPaths(error) {
   const matches = [
     ['Grid size must',['scenario.grid_size','scenario.observation_size']],
     ['Minimum altitude',['scenario.min_altitude_m','scenario.max_altitude_m']],
-    ['Coverage weights',['scenario.reward.mean_weight','scenario.reward.fairness_weight','scenario.reward.p10_weight']],
+    ['Coverage weights',['scenario.reward.mean_weight','scenario.reward.fairness_weight']],
     ['Variable count bounds',['scenario.min_uavs','scenario.max_uavs','scenario.min_stations','scenario.max_stations']],
     ['Place exactly',['scenario.station_positions_wgs84','scenario.station_types.0.fixed_count']],
     ['launch dock',['scenario.uav_launch_docks']],
@@ -290,7 +291,7 @@ function updateWorkspaceVisibility() {
   document.querySelectorAll('[data-tabs]').forEach(element=>element.hidden=!element.dataset.tabs.split(' ').includes(currentTab));
   $('map').hidden=!map;$('map-fallback').hidden=Boolean(map);
   $('evaluation-panel').hidden=currentTab!=='test'||testEvaluation.status==='idle';
-  $('simulation-label').textContent=currentTab==='training'?'Training episode':viewFrames.test?.evaluation_preview?'Evaluation · episode 1':'Test';
+  $('simulation-label').textContent=currentTab==='training'?'Training episode':viewFrames.test?.evaluation_preview?`Evaluation · episode ${viewFrames.test.episode||1}`:'Test';
 }
 function scheduleMapFit(force=false){
   forceMapFit ||= force;
@@ -395,7 +396,7 @@ function applyTelemetry(frame){const started=performance.now();const c=frame.inf
 }
 function applyFrame(frame,fit=false,historical=false){
   lastFrame=frame;if(currentTab!=='training'&&!historical)viewFrames[currentTab]=frame;
-  if(currentTab==='test')$('simulation-label').textContent=historical?'History':frame.evaluation_preview?'Evaluation · episode 1':'Test';
+  if(currentTab==='test')$('simulation-label').textContent=historical?'History':frame.evaluation_preview?`Evaluation · episode ${frame.episode||1}`:'Test';
   if(currentTab!=='mission')applyTelemetry(frame);
   if(currentTab==='mission')$('area-summary').textContent=`${(frame.area_m2/10000).toFixed(2)} ha · ${frame.cell_size_m.toFixed(3)} m cells`;
   if(!map)return;
@@ -438,7 +439,7 @@ function testSettings(){
   return Object.fromEntries(Object.entries(testInputs).map(([key,id])=>[key,$(id).valueAsNumber]));
 }
 async function requireTestBackend(){
-  if(!testBackendReady)testBackendReady=(await api('/api/health')).test_controls_revision===2;
+  if(!testBackendReady)testBackendReady=(await api('/api/health')).test_controls_revision===3;
   if(!testBackendReady)throw Error('Restart OPUS to load the Test controls.');
 }
 async function reset(stopPlay=true){
@@ -450,13 +451,13 @@ async function reset(stopPlay=true){
   if(stopPlay)pause();
   const testConfig=structuredClone(policy==='model'?replayConfig:config);testConfig.training.seed=settings.seed;
   const frame=await api(`/api/simulation/reset?trail_length_m=${settings.trail_length_m}`,testConfig);
-  simulationReady=true;viewFrames.test=frame;resetTimeline('test');if(currentTab==='test'){applyFrame(frame,true);updateTimeline();}
+  simulationReady=true;viewFrames.test=frame;recordTestFrame(frame);resetTimeline('test');if(currentTab==='test'){applyFrame(frame,true);updateTimeline();}
 }
 async function step(){
   if(currentTab!=='test')return;const settings=testSettings();
   if(!simulationReady)await reset(false);if(currentTab!=='test')return;
   const frame=await api('/api/simulation/step',{policy:$('simulation-policy').value,trail_length_m:settings.trail_length_m});
-  viewFrames.test=frame;if(currentTab==='test'){if(timelineViews.test.live)applyFrame(frame);updateTimeline();}
+  viewFrames.test=frame;recordTestFrame(frame);if(currentTab==='test'){if(timelineViews.test.live)applyFrame(frame);updateTimeline();}
 }
 async function play(){
   if(playing){pause();return;}testSettings();playing=true;
@@ -507,9 +508,38 @@ function chart(id,history,key,color){
   history.forEach((point,index)=>{if(index&&point.episode===history[index-1].episode)return;const x=45+(w-58)*(point.steps-first)/Math.max(1,last-first),y=15+116*(1-(point[key]-min)/(max-min||1));ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();});
   ctx.fillStyle='#9ab0c0';ctx.fillText(first.toLocaleString(),45,160);const label=last.toLocaleString()+' steps';ctx.fillText(label,Math.max(45,w-ctx.measureText(label).width-8),160);
 }
+function recordTestFrame(frame){
+  if(!frame?.info)return;
+  const id=frame.timeline?.id||'';
+  if(id!==testSeriesId){testHistory=[];testSeriesId=id;}
+  testPlotSource='playback';
+  const row={steps:frame.timeline?.last_step??frame.info.step,episode:frame.episode||1,
+    mean_coverage:frame.info.coverage.mean,mean_step_reward:Number(frame.info.reward||0)};
+  if(!testHistory.length||row.steps>testHistory.at(-1).steps)testHistory.push(row);
+  testHistory=testHistory.slice(-2000);renderTestPlots();
+}
+function renderTestPlots(){
+  if(currentTab!=='test')return;
+  const history=testPlotSource==='evaluation'?evaluationHistory:testHistory;
+  chart('coverage-chart',history,'mean_coverage','#e9b36c');chart('reward-chart',history,'mean_step_reward','#8cb9cd');
+  $('coverage-plot').dataset.help=fieldHelp.test_coverage_plot;$('reward-plot').dataset.help=fieldHelp.test_reward_plot;
+  $('reward-chart-label').textContent=viewFrames.test?.info?.reward_mode==='legacy_team'?'Team reward':'Mean UAV reward';
+}
+function acceptEvaluation(job){
+  if(job.job_id&&job.job_id!==evaluationJobId){evaluationHistory=[];evaluationJobId=job.job_id;evaluationMapKey='';testPlotSource='evaluation';resetTimeline('test');}
+  const cursor=evaluationHistory.at(-1)?.steps??-1;
+  evaluationHistory.push(...(job.samples||[]).filter(row=>row.steps>cursor));evaluationHistory=evaluationHistory.slice(-2000);
+  testEvaluation=job;renderEvaluation();
+}
+async function controlEvaluation(action){
+  const response=await api('/api/evaluation/'+action,{});
+  testEvaluation={...testEvaluation,status:response.status};renderEvaluation();
+}
 function renderTraining(){
   const job=trainingJob;
   if(!job)return;
+  $('coverage-plot').dataset.help=fieldHelp.coverage_plot;$('reward-plot').dataset.help=fieldHelp.reward_plot;
+  $('reward-chart-label').textContent='Mean UAV reward';
   if(job.status==='idle'&&idleTrainingFrame){if(trainingMapKey!=='idle'){applyFrame(idleTrainingFrame);trainingMapKey='idle';}$('episode-counter').textContent='';$('training-phase').textContent='No experiment running.';chart('coverage-chart',[],'mean_coverage','#e9b36c');chart('reward-chart',[],'mean_step_reward','#8cb9cd');return;}
   const timeline=timelineViews.training;
   updateTimeline();
@@ -560,7 +590,7 @@ async function poll(){
     if(currentTab==='training')renderTraining();
     diagnostics(job.metrics);timingDiagnostics(job.timings);
     if(testBackendReady&&!evaluationStarting){
-      try{testEvaluation=await api('/api/evaluation/status');renderEvaluation();}
+      try{acceptEvaluation(await api(`/api/evaluation/status?after_step=${evaluationHistory.at(-1)?.steps??-1}&job_id=${encodeURIComponent(evaluationJobId)}`));}
       catch(error){$('evaluation-progress').textContent=error.message;}
     }
     if(job.status==='failed'&&job.error!==poll.lastError){notice(job.error,true);poll.lastError=job.error;}
@@ -573,7 +603,7 @@ function refreshLoadButtons(){
   document.querySelectorAll('.run-block').forEach(item=>{
     const button=item.querySelector('.load-run');if(!button)return;
     const loaded=runIsLoaded(item.dataset.runId,item.querySelector('select').value);
-    button.textContent=loaded?'Unload':'Load';button.setAttribute('aria-pressed',String(loaded));button.disabled=modelLoading;
+    button.textContent=loaded?'Unload':'Load';button.setAttribute('aria-pressed',String(loaded));button.disabled=modelLoading||evaluationBusy();
   });
 }
 function updateLoadedName(){
@@ -588,7 +618,7 @@ async function chooseRun(run,checkpoint){
   try{
     const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint,seed:settings.seed,trail_length_m:settings.trail_length_m});
     selectedRun={run_id:run.run_id,name:run.name||run.run_id,checkpoint};replayConfig=result.config;
-    $('simulation-policy').value='model';simulationReady=true;viewFrames.test=result.frame;
+    $('simulation-policy').value='model';simulationReady=true;viewFrames.test=result.frame;recordTestFrame(result.frame);
     resetTimeline('test');updateLoadedName();
     if(currentTab==='test'){applyFrame(result.frame,true);updateTimeline();}
   }finally{modelLoading=false;refreshLoadButtons();}
@@ -596,6 +626,7 @@ async function chooseRun(run,checkpoint){
 async function unloadRun(){
   pause();await requireTestBackend();await api('/api/simulation/unload',{});
   selectedRun=null;replayConfig=null;simulationReady=false;$('simulation-policy').value='heuristic';
+  testHistory=[];testSeriesId='';testPlotSource='playback';renderTestPlots();
   viewFrames.test=idleTrainingFrame;resetTimeline('test');updateLoadedName();
   if(currentTab==='test'){applyFrame(viewFrames.test,true);updateTimeline();}
 }
@@ -615,6 +646,7 @@ async function startEvaluation(run=null,checkpoint=null){
   evaluationStarting=true;testEvaluation={status:'starting',episode:1,episodes:settings.episodes,step:0};renderEvaluation();
   try{
     if(run)await chooseRun(run,checkpoint);
+    testPlotSource='evaluation';evaluationHistory=[];evaluationJobId='';evaluationMapKey='';resetTimeline('test');
     const policy=$('simulation-policy').value;
     const body={policy,episodes:settings.episodes,seed:settings.seed,trail_length_m:settings.trail_length_m};
     if(policy==='model'){
@@ -627,17 +659,33 @@ async function startEvaluation(run=null,checkpoint=null){
   finally{evaluationStarting=false;renderEvaluation();}
   $('evaluation-panel').scrollIntoView({block:'nearest',behavior:'smooth'});
 }
+function evaluationBusy(){return ['starting','running','pausing','paused','stopping'].includes(testEvaluation.status);}
 function renderEvaluation(){
-  const job=testEvaluation,busy=['starting','running','stopping'].includes(job.status);
+  const job=testEvaluation,busy=evaluationBusy();
+  renderTestPlots();
   $('evaluation-panel').hidden=currentTab!=='test'||job.status==='idle';
   $('evaluate-policy').disabled=busy;$('stop-evaluation').hidden=!busy;$('stop-evaluation').disabled=job.status==='starting';
+  const pauseButton=$('pause-evaluation');pauseButton.hidden=!busy;pauseButton.textContent=job.status==='paused'?'Continue':job.status==='pausing'?'Pausing…':'Pause';
+  pauseButton.disabled=!['running','paused'].includes(job.status);pauseButton.setAttribute('aria-pressed',String(job.status==='paused'));
+  for(const id of ['reset-simulation','step-simulation','play-simulation','simulation-policy'])$(id).disabled=busy;
+  refreshLoadButtons();
   document.querySelectorAll('.evaluate').forEach(button=>button.disabled=busy);
   if(job.status==='idle')return;
   const total=(job.episodes||1)*(job.episode_length||1),done=((job.episode||1)-1)*(job.episode_length||1)+(job.step||0);
   $('evaluation-fill').style.width=(job.status==='completed'?100:Math.min(100,100*done/total))+'%';
   const source=job.run_id?(selectedRun?.run_id===job.run_id?selectedRun.name:job.run_id):job.policy==='random'?'Random actions':'Circular baseline';
-  $('evaluation-progress').textContent=busy?`${job.status==='stopping'?'Stopping evaluation':'Evaluating'} · ${source} · episode ${job.episode||1} / ${job.episodes||1} · step ${job.step||0}${job.episode_length?' / '+job.episode_length:''} · ${Number(job.elapsed_seconds||0).toFixed(1)} s`:
+  const stateLabel={paused:'Paused',pausing:'Pausing…',stopping:'Stopping evaluation'}[job.status]||'Evaluating';
+  $('evaluation-progress').textContent=busy?`${stateLabel} · ${source} · episode ${job.episode||1} / ${job.episodes||1} · step ${job.step||0}${job.episode_length?' / '+job.episode_length:''} · ${Number(job.elapsed_seconds||0).toFixed(1)} s`:
     job.status==='failed'?job.error:`${job.status==='stopped'?'Stopped':'Completed'} · ${source} · ${job.result?.episodes||0} episodes · ${Number(job.elapsed_seconds||0).toFixed(1)} s`;
+  if(testPlotSource==='evaluation'&&job.frame){
+    viewFrames.test={...job.frame,timeline:job.timeline||job.frame.timeline,evaluation_preview:true};simulationReady=false;
+    if(currentTab==='test'&&timelineViews.test.live){
+      const frameKey=job.job_id+':'+job.frame_step;
+      if(frameKey!==evaluationMapKey){applyFrame(viewFrames.test);evaluationMapKey=frameKey;}
+      if(job.telemetry)applyTelemetry(job.telemetry);
+    }
+    if(currentTab==='test')updateTimeline();
+  }
   if(!job.result){$('evaluation-result').replaceChildren();return;}
   const key=job.job_id+':'+job.status;
   if(key===evaluationResultKey)return;evaluationResultKey=key;
@@ -646,7 +694,7 @@ function renderEvaluation(){
     const rows=[['Mean return','return_mean','evaluation_return'],['Mean quality','coverage_mean','evaluation_quality'],['Final fairness','fairness_final','evaluation_fairness'],['Energy / episode · Wh','energy_Wh','evaluation_energy'],['Crashes / episode','crashed_uavs','evaluation_crashes']];
     $('evaluation-result').innerHTML='<dl class="result-details">'+rows.map(([label,key,help])=>`<div tabindex="0" data-help="${escapeHTML(fieldHelp[help])}"><dt>${label}</dt><dd>${Number(result[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';
   }else $('evaluation-result').textContent='No complete episodes.';
-  if(result.frame){
+  if(result.frame&&!job.frame&&testPlotSource==='evaluation'){
     pause();
     viewFrames.test={...result.frame,evaluation_preview:true};simulationReady=false;
     resetTimeline('test');
@@ -682,17 +730,18 @@ async function deleteSelectedRun(){
   $('delete-run-dialog').close();pendingDelete=null;
   if(selectedRun?.run_id===run.run_id){
     pause();selectedRun=null;replayConfig=null;simulationReady=false;
+    testHistory=[];testSeriesId='';testPlotSource='playback';
     $('simulation-policy').value='heuristic';$('simulation-policy').querySelector('[value="model"]').disabled=true;
     viewFrames.test=idleTrainingFrame;updateLoadedName();if(currentTab==='test')applyFrame(viewFrames.test,true);
   }
-  if(testEvaluation.run_id===run.run_id){testEvaluation={status:'idle'};evaluationResultKey='';renderEvaluation();}
+  if(testEvaluation.run_id===run.run_id){testEvaluation={status:'idle'};evaluationResultKey='';evaluationHistory=[];evaluationJobId='';evaluationMapKey='';testPlotSource='playback';renderEvaluation();}
   await loadRuns();
 }
 
 async function initialize() {
   try {
     const [response,area,health]=await Promise.all([api('/api/defaults'),api('/static/default-area.json'),api('/api/health')]);
-    testBackendReady=health.test_controls_revision===2;
+    testBackendReady=health.test_controls_revision===3;
     defaults=response.config;schema=response.schema;presets=response.presets;hardware=response.hardware||null;config=structuredClone(defaults);
     Object.assign(config.scenario,area);normalizeMission(config.scenario);renderForms();
     if(window.L) {
@@ -742,6 +791,7 @@ async function initialize() {
     }
     action('evaluate-policy',()=>startEvaluation());
     action('stop-evaluation',async()=>{await api('/api/evaluation/stop',{});});
+    action('pause-evaluation',()=>controlEvaluation(testEvaluation.status==='paused'?'resume':'pause'));
     $('cancel-delete').onclick=()=>{$('delete-run-dialog').close();pendingDelete=null;};
     action('confirm-delete',deleteSelectedRun);
     $('draw-area').onclick=()=>{
@@ -759,7 +809,7 @@ async function initialize() {
     });
     action('start-training',async()=>{
       const health=await api('/api/health');
-      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==6)throw Error('Restart OPUS to load training Pause and Step controls.');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==7)throw Error('Restart OPUS to load the current training controls and coverage model.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});

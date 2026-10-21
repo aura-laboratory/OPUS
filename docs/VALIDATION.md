@@ -130,6 +130,14 @@ Interface checks cover Pause/Resume/Step availability and command routing, evalu
 
 The application server was not launched or restarted. These checks use bounded training, TestClient and Node logic tests; rendered-browser layout remains unverified. Changes are recorded in progressive Git commits with comments on control boundaries, timing exclusion and lock ordering.
 
+## P₁₀ removal and evolving evaluation charts: 2026-10-21
+
+All **80 Python tests** and **15 Node interface logic tests** pass, with Ruff, both JavaScript syntax checks and whitespace checks. Current policies use two map channels and no percentile reward or step-log field. Coverage tests forbid percentile calculation/sorting on the current path, verify the remaining weighted objective, preserve original actions/rewards/channels when loading an earlier IPPO checkpoint, and upgrade an older scenario when starting fresh training. Earlier MAPPO compatibility remains covered.
+
+Evaluation checks cover saved-model, circular and random policies: pause after a known interaction, continue the same episode, preserve repeatable returns and graph samples, report exact episode boundaries, return only unseen cursor samples, and keep evaluation separate from training. Stop and application shutdown wake a paused evaluator; incomplete episodes are excluded from aggregate results. Live visual history is available during evaluation, begins at step zero, and follows every episode. Exported result frames retain the first completed episode. Deleting a completed evaluated run clears its sample/history buffers.
+
+Interface checks cover per-step playback charts, episode changes, new-playback resets, evaluation sample deduplication, separate training/playback/evaluation histories, and Pause changing to Continue without clearing graphs. Checkpoint compatibility was verified using controlled fixtures. The application server was not launched, and rendered-browser layout remains unverified.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

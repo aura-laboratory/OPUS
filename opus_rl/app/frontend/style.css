@@ -87,3 +87,4 @@ dialog{background:#16232f;color:#e8eef3;border:1px solid #536776;border-radius:8
 .timeline output{font-size:12px;color:#a9bac8;font-variant-numeric:tabular-nums;white-space:nowrap}
 .timeline button{padding:5px 9px;font-size:12px}
 #timing-diagnostics tr.subphase-detail td:first-child{padding-left:22px;color:#95a9b8}
+.evaluation-actions{display:flex;gap:8px}

@@ -36,15 +36,14 @@
         <math display="block" aria-label="Coverage score"><mrow>
           <mi>F</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>=</mo>
           <mn data-reward-weight="mean_weight">0.5</mn><mi>μ</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>+</mo>
-          <mn data-reward-weight="fairness_weight">0.4</mn><mi>J</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>+</mo>
-          <mn data-reward-weight="p10_weight">0.1</mn><msub><mi>P</mi><mn>10</mn></msub><mo>(</mo><mi>C</mi><mo>)</mo>
+          <mn data-reward-weight="fairness_weight">0.4</mn><mi>J</mi><mo>(</mo><mi>C</mi><mo>)</mo>
         </mrow></math>
         <math display="block" aria-label="Individual UAV reward"><mtable columnalign="right left" columnspacing="0.25em" rowspacing="0.3em">
           <mtr><mtd><msub><mi>r</mi><mi>i</mi></msub><mo>=</mo></mtd><mtd><mi>F</mi><mo>(</mo><msup><mi>C</mi><mo>′</mo></msup><mo>)</mo><mo>−</mo><mi>F</mi><mo>(</mo><msubsup><mi>C</mi><mrow><mo>−</mo><mi>i</mi></mrow><mo>′</mo></msubsup><mo>)</mo></mtd></mtr>
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="energy_weight">0.2</mn><msub><mi>e</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="projection_weight">0.1</mn><msub><mi>p</mi><mi>i</mi></msub></mtd></mtr>
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="collision_weight">0.3</mn><msub><mi>c</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="crash_weight">0.4</mn><msub><mi>x</mi><mi>i</mi></msub></mtd></mtr>
         </mtable></math>
-        <p class="muted">μ: mean · J: fairness · P₁₀: 10th percentile<br>e: energy · p: correction · c: collision · x: crash</p>
+        <p class="muted">μ: mean · J: fairness<br>e: energy · p: correction · c: collision · x: crash</p>
       </div>
     </details>
     <div id="training-progress" class="group"><h2>Progress</h2><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p>
@@ -86,12 +85,12 @@
   <div class="metrics" id="live-metrics" data-tabs="training test" hidden><div data-reading-help="mean_quality"><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div data-reading-help="spatial_fairness"><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div data-reading-help="live_reward"><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
   <div id="safety-metrics" class="muted" data-tabs="training test" hidden></div>
   <section id="evaluation-panel" class="chart-card" data-tabs="test" hidden>
-    <h2>Evaluation <button id="stop-evaluation" class="text-button" hidden>Stop</button></h2>
+    <h2>Evaluation <span class="evaluation-actions"><button id="pause-evaluation" class="text-button" data-reading-help="pause_evaluation" hidden>Pause</button><button id="stop-evaluation" class="text-button" hidden>Stop</button></span></h2>
     <div class="progress"><div id="evaluation-fill"></div></div>
     <p id="evaluation-progress" class="muted" role="status" aria-live="polite"></p>
     <div id="evaluation-result"></div>
   </section>
-  <div id="charts" data-tabs="training" hidden><div class="chart-card" data-reading-help="coverage_plot"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage at each training step"></canvas></div><div class="chart-card" data-reading-help="reward_plot"><h2>Mean UAV reward</h2><canvas id="reward-chart" aria-label="Mean UAV reward at each training step"></canvas></div></div>
+  <div id="charts" data-tabs="training test" hidden><div class="chart-card" id="coverage-plot" data-reading-help="coverage_plot"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage at each environment step"></canvas></div><div class="chart-card" id="reward-plot" data-reading-help="reward_plot"><h2 id="reward-chart-label">Mean UAV reward</h2><canvas id="reward-chart" aria-label="Reward at each environment step"></canvas></div></div>
   <div id="fleet-status" class="fleet-strip" data-tabs="training test" hidden></div>
 </div>
 </main>
