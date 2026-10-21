@@ -151,7 +151,8 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
 
             if callback:
                 with timings.measure("telemetry"):
-                    publish("collecting", telemetry=latest_telemetry, frame=env.frame(), frame_step=0)
+                    publish("collecting", telemetry=latest_telemetry, frame=env.frame(), frame_step=0,
+                            frame_step_delta=0, frame_simulated_delta=0)
             while steps < cfg.total_steps and not stop_event.is_set():
                 batch = {k: [] for k in ("obs", "latent", "log_prob", "values", "next_values",
                                         "rewards", "terminated", "ended", "masks", "value_masks")}
@@ -214,7 +215,10 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                             latest_telemetry = env.telemetry()
                             frame = {}
                             if now - last_frame_at >= 1 or term or trunc or steps == cfg.total_steps:
-                                frame = {"frame": env.frame(), "frame_step": steps}
+                                interval = steps - last_frame_step
+                                frame = {"frame": env.frame(), "frame_step": steps,
+                                         "frame_step_delta": interval,
+                                         "frame_simulated_delta": interval * config.scenario.delta_t}
                                 last_frame_at = now
                                 last_frame_step = steps
                             publish("collecting", sample=sample, telemetry=latest_telemetry, **frame)
@@ -287,7 +291,9 @@ def train(config: ExperimentConfig, runs_root="runs", callback=None, stop_event=
                 publish("collecting", evaluation=evaluation)
             if callback and last_frame_step != steps:
                 with timings.measure("telemetry"):
-                    publish("checkpointing", frame=env.frame(), frame_step=steps)
+                    interval = steps - last_frame_step
+                    publish("checkpointing", frame=env.frame(), frame_step=steps,
+                            frame_step_delta=interval, frame_simulated_delta=interval * config.scenario.delta_t)
             checkpoint("final.pt")
             if not (directory / "best.pt").exists():
                 checkpoint("best.pt")

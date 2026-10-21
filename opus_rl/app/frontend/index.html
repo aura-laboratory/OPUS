@@ -8,7 +8,7 @@
 </head>
 <body>
 <header><div class="brand">OPUS <span>Persistent UAV coverage</span></div>
-  <nav aria-label="Workspace"><button class="selected" data-tab="mission">Mission</button><button data-tab="training">Training</button><button data-tab="runs">Runs</button></nav>
+  <nav aria-label="Workspace"><button class="selected" data-tab="mission">Mission</button><button data-tab="training">Training</button><button data-tab="test">Test</button></nav>
   <div id="job-badge" class="badge">Ready</div></header>
 <main>
 <aside>
@@ -53,7 +53,16 @@
     <details class="group"><summary>Learning, energy and safety</summary><div id="training-diagnostics"><p class="muted">Available after the first rollout.</p></div></details>
     <details class="group"><summary>Processing time</summary><div id="timing-diagnostics"><p class="muted">Available during training.</p></div></details>
   </section>
-  <section id="runs-controls" hidden>
+  <section id="test-controls" hidden>
+    <div class="group"><h2>Testing</h2>
+      <div id="test-fields" class="fields">
+        <label class="field" data-reading-help="trail_steps"><span>Trail length</span><span class="value-box"><input id="test-trail-steps" type="number" value="100" min="0" max="2000" step="1"><span class="unit">steps</span></span><small class="field-error" hidden></small></label>
+        <label class="field" data-reading-help="playback_rate"><span>Playback speed</span><span class="value-box"><input id="test-playback-rate" type="number" value="3" min="0.1" max="30" step="0.1"><span class="unit">steps/s</span></span><small class="field-error" hidden></small></label>
+        <label class="field" data-reading-help="test_episodes"><span>Evaluation episodes</span><span class="value-box"><input id="test-episodes" type="number" value="5" min="1" max="100" step="1"></span><small class="field-error" hidden></small></label>
+        <label class="field" data-reading-help="test_seed"><span>Seed</span><span class="value-box"><input id="test-seed" type="number" value="42" min="0" max="2147483647" step="1"></span><small class="field-error" hidden></small></label>
+      </div>
+      <button id="evaluate-policy" class="full">Evaluate policy</button>
+    </div>
     <div class="group"><h2>Saved runs <button id="refresh-runs" class="text-button">Refresh</button></h2><div id="run-list"></div></div>
   </section>
 </aside>
@@ -62,22 +71,28 @@
     <div id="search-results"></div><span id="map-mode"></span></div>
   <div id="map" role="region" aria-label="Mission map"></div>
   <div id="map-fallback" hidden>Map unavailable.</div>
-  <p id="runs-placeholder" class="muted" hidden>Select a saved run to replay or evaluate.</p>
-  <div class="simulation-bar" id="simulation-bar"><div data-reading-help="simulation_time"><span class="eyebrow" id="simulation-label">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
+  <div class="simulation-bar" id="simulation-bar" data-tabs="training test" hidden><div data-reading-help="simulation_time"><span class="eyebrow" id="simulation-label">SIMULATION</span><strong id="simulation-time">0 s</strong></div>
     <div id="episode-counter" class="muted" data-tabs="training" data-reading-help="episode_counter" hidden></div>
-    <div class="replay-controls" id="simulation-controls" data-tabs="mission runs">
-      <label class="sr-only" for="simulation-policy">Preview policy</label><select id="simulation-policy" data-tabs="mission"><option value="heuristic">Sweep baseline</option><option value="random">Random actions</option></select>
-      <span id="loaded-model" class="muted" data-tabs="runs" hidden></span>
+    <div class="replay-controls" id="simulation-controls" data-tabs="test" hidden>
+      <label class="sr-only" for="simulation-policy">Test policy</label><select id="simulation-policy"><option value="heuristic">Circular baseline</option><option value="random">Random actions</option><option value="model" disabled>Loaded model</option></select>
       <button id="reset-simulation">Reset</button><button id="step-simulation">Step</button><button id="play-simulation">Play</button>
     </div>
   </div>
+  <div id="loaded-model" class="muted" data-tabs="test" hidden></div>
   <div id="training-phase" class="muted" data-tabs="training" hidden></div>
-  <div class="metrics" id="live-metrics"><div data-reading-help="mean_quality"><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div data-reading-help="p10_quality"><span>10th percentile</span><strong id="metric-p10">0.000</strong></div><div data-reading-help="spatial_fairness"><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div data-reading-help="live_reward"><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
-  <div id="safety-metrics" class="muted"></div>
+  <div class="metrics" id="live-metrics" data-tabs="training test" hidden><div data-reading-help="mean_quality"><span>Mean quality</span><strong id="metric-mean">0.000</strong></div><div data-reading-help="p10_quality"><span>10th percentile</span><strong id="metric-p10">0.000</strong></div><div data-reading-help="spatial_fairness"><span>Spatial fairness</span><strong id="metric-fairness">0.000</strong></div><div data-reading-help="live_reward"><span id="reward-label">Mean UAV reward</span><strong id="metric-reward">0.000</strong></div></div>
+  <div id="safety-metrics" class="muted" data-tabs="training test" hidden></div>
+  <section id="evaluation-panel" class="chart-card" data-tabs="test" hidden>
+    <h2>Evaluation <button id="stop-evaluation" class="text-button" hidden>Stop</button></h2>
+    <div class="progress"><div id="evaluation-fill"></div></div>
+    <p id="evaluation-progress" class="muted" role="status" aria-live="polite"></p>
+    <div id="evaluation-result"></div>
+  </section>
   <div id="charts" data-tabs="training" hidden><div class="chart-card" data-reading-help="coverage_plot"><h2>Coverage quality</h2><canvas id="coverage-chart" aria-label="Mean coverage at each training step"></canvas></div><div class="chart-card" data-reading-help="reward_plot"><h2>Mean UAV reward</h2><canvas id="reward-chart" aria-label="Mean UAV reward at each training step"></canvas></div></div>
-  <div id="fleet-status" class="fleet-strip"></div>
+  <div id="fleet-status" class="fleet-strip" data-tabs="training test" hidden></div>
 </div>
 </main>
 <div id="notice" role="status" aria-live="polite" hidden></div>
+<dialog id="delete-run-dialog"><h2>Delete saved run?</h2><p id="delete-run-name"></p><p class="muted">This permanently deletes its checkpoints and logs.</p><div class="toolbar"><button id="cancel-delete">Cancel</button><button id="confirm-delete" class="danger">Delete</button></div></dialog>
 <footer><span>OPUS v1</span><span id="connection-status">Connecting…</span></footer>
 </body></html>

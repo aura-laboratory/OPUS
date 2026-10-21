@@ -3,10 +3,11 @@ import torch
 
 from opus_rl.envs import OpusTeamEnv
 from opus_rl.marl.network import pack_observation, stack_dict, tensor_dict
+from opus_rl.simulation.trajectory import Trajectories
 
 
 def heuristic_action(env):
-    """Independent cyclic sweep at a GSD-feasible altitude; comparison baseline only."""
+    """Independent circular targets; comparison baseline only."""
     actions = np.zeros((env.n_max, 5), np.float32)
     for j, uav in enumerate(env.uavs):
         phase = (env.step_index * 0.05 + j / max(1, len(env.uavs))) % 1
@@ -20,7 +21,7 @@ def heuristic_action(env):
 
 
 def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", device="cpu",
-             stop_event=None, include_frame=False, callback=None):
+             stop_event=None, include_frame=False, callback=None, trail_steps=0):
     totals, coverages, energy, collisions, crashes, frames, uav_returns = [], [], [], [], [], [], []
     for episode in range(episodes):
         if stop_event and stop_event.is_set():
@@ -28,6 +29,9 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         env = OpusTeamEnv(scenario)
         observation, info = env.reset(seed=seed + episode)
         env.action_space.seed(seed + episode)
+        trails = Trajectories()
+        if include_frame and episode == 0 and trail_steps:
+            trails.record(env)
         total = energy_used = collision_count = 0
         individual_returns = np.zeros(env.n_max)
         averages = []
@@ -45,6 +49,8 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
                 with torch.no_grad():
                     action = model.act(packed, deterministic=True)[0][0].cpu().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
+            if include_frame and episode == 0 and trail_steps:
+                trails.record(env)
             if callback:
                 callback({"episode": episode + 1, "episodes": episodes, "step": info["step"],
                           "episode_length": scenario.horizon})
@@ -55,6 +61,9 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
             collision_count += len(info["collision_pairs"])
             if terminated or truncated:
                 break
+        if stop_event and stop_event.is_set() and not env.finished:
+            env.close()
+            break  # An interrupted episode is not a completed evaluation sample.
         totals.append(total)
         uav_returns.append({"seed": seed + episode, "uavs": [
             {"id": j, "inventory_index": uav.inventory_index, "name": uav.spec.name,
@@ -65,7 +74,8 @@ def evaluate(scenario, model=None, episodes=2, seed=10000, policy="model", devic
         collisions.append(collision_count)
         crashes.append(info["crashed_uavs"])
         if include_frame and episode == 0:
-            frames.append(env.frame())
+            frames.append({**env.frame(), "episode": 1,
+                           "trails": trails.snapshot(env.step_index, trail_steps)})
         env.close()
     if not totals:
         return {"episodes": 0}

@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import shutil
 import threading
 import time
 import traceback
@@ -8,13 +9,15 @@ import zipfile
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
+from uuid import uuid4
 
 import httpx
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from opus_rl.app import FRONTEND, frontend_revision
@@ -22,9 +25,23 @@ from opus_rl.app.defaults import default_experiment
 from opus_rl.configs import ExperimentConfig, ScenarioConfig
 from opus_rl.configs.presets import reference_presets
 from opus_rl.envs import OpusTeamEnv
+from opus_rl.simulation.trajectory import Trajectories
 from opus_rl.training.evaluate import evaluate, heuristic_action
 from opus_rl.training.hardware import hardware_info, select_device
 from opus_rl.training.train import load_checkpoint, save_json, train
+
+
+class PlaybackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checkpoint: str = "best.pt"
+    seed: int | None = Field(None, ge=0, le=2**31 - 1)
+    trail_steps: int = Field(100, ge=0, le=2000)
+
+
+class EvaluationRequest(PlaybackRequest):
+    episodes: int = Field(5, ge=1, le=100)
+    policy: Literal["model", "heuristic", "random"] = "model"
+    scenario: ScenarioConfig | None = None
 
 
 class State:
@@ -33,10 +50,16 @@ class State:
         self.lock = threading.RLock()
         self.simulation = None
         self.simulation_model = None
+        self.simulation_source = None
+        self.simulation_episode = 1
+        self.trails = Trajectories()
         self.worker = None
         self.stop = threading.Event()
         self.status = {"status": "idle", "history": []}
         self.samples = deque(maxlen=2000)
+        self.evaluation_worker = None
+        self.evaluation_stop = threading.Event()
+        self.evaluation_status = {"status": "idle"}
         self.geocode_lock = asyncio.Lock()
         self.last_geocode = 0.0
         self.geocode_cache = {}
@@ -63,6 +86,16 @@ class State:
             raise HTTPException(404, "Run does not exist.")
         return directory
 
+    def simulation_frame(self, trail_steps):
+        if self.simulation is None:
+            raise HTTPException(409, "Initialize the test first.")
+        return {**self.simulation.frame(), "episode": self.simulation_episode,
+                "trails": self.trails.snapshot(self.simulation.step_index, trail_steps)}
+
+    def reset_trails(self):
+        self.trails = Trajectories()
+        self.trails.record(self.simulation)
+
 
 def create_app(runs_root=None):
     state = State(runs_root or Path(__file__).parents[2] / "runs")
@@ -71,8 +104,11 @@ def create_app(runs_root=None):
     async def lifespan(app):
         yield
         state.stop.set()
+        state.evaluation_stop.set()
         if state.worker and state.worker.is_alive():
             await asyncio.to_thread(state.worker.join, 10)
+        if state.evaluation_worker and state.evaluation_worker.is_alive():
+            await asyncio.to_thread(state.evaluation_worker.join, 10)
 
     app = FastAPI(title="OPUS v1", lifespan=lifespan)
     app.state.opus = state
@@ -97,6 +133,7 @@ def create_app(runs_root=None):
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
                 "training_controls_revision": 4,
+                "test_controls_revision": 1,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
     @app.get("/api/defaults")
@@ -130,21 +167,33 @@ def create_app(runs_root=None):
         return {"valid": True, "frame": env.frame(), "config": config.model_dump()}
 
     @app.post("/api/simulation/reset")
-    def reset_simulation(config: ExperimentConfig):
+    def reset_simulation(config: ExperimentConfig, trail_steps: int = Query(100, ge=0, le=2000)):
         with state.lock:
             state.simulation = OpusTeamEnv(config.scenario)
             state.simulation.reset(seed=config.training.seed)
             state.simulation.action_space.seed(config.training.seed)
-            return state.simulation.frame()
+            state.simulation_episode = 1
+            state.reset_trails()
+            return state.simulation_frame(trail_steps)
+
+    @app.get("/api/simulation/frame")
+    def simulation_frame(trail_steps: int = Query(100, ge=0, le=2000)):
+        with state.lock:
+            return state.simulation_frame(trail_steps)
 
     @app.post("/api/simulation/step")
     def step_simulation(body: dict):
         with state.lock:
+            length = body.get("trail_steps", 100)
+            if not isinstance(length, int) or not 0 <= length <= 2000:
+                raise HTTPException(400, "Trail length must be 0–2000 steps.")
             env = state.simulation
             if env is None:
                 raise HTTPException(409, "Initialize the simulation first.")
             if env.finished:
                 env.reset()
+                state.simulation_episode += 1
+                state.reset_trails()
             policy = body.get("policy", "heuristic")
             if policy == "random":
                 action = env.action_space.sample()
@@ -153,7 +202,7 @@ def create_app(runs_root=None):
             elif policy == "model":
                 from opus_rl.marl.network import pack_observation, stack_dict, tensor_dict
                 if state.simulation_model is None:
-                    raise HTTPException(409, "Load a saved model from Runs first.")
+                    raise HTTPException(409, "Load a saved model from Test first.")
                 obs = tensor_dict(stack_dict([pack_observation(env._observation())]), "cpu")
                 action = state.simulation_model.act(obs, deterministic=True)[0][0].cpu().numpy()
             elif policy == "manual":
@@ -161,7 +210,8 @@ def create_app(runs_root=None):
             else:
                 raise HTTPException(400, "Unknown simulation policy.")
             env.step(action)
-            return env.frame()
+            state.trails.record(env)
+            return state.simulation_frame(length)
 
     @app.post("/api/training/start")
     def start(config: ExperimentConfig):
@@ -222,47 +272,155 @@ def create_app(runs_root=None):
             for path in sorted(state.runs_root.glob("*/summary.json"), reverse=True):
                 try:
                     summary = json.loads(path.read_text(encoding="utf8"))
+                    summary["run_id"] = path.parent.name
+                    metadata = path.parent / "metadata.json"
+                    summary["name"] = json.loads(metadata.read_text(encoding="utf8")).get("name", path.parent.name) \
+                        if metadata.exists() else path.parent.name
                     summary["checkpoints"] = [p.name for p in sorted(path.parent.glob("*.pt"))]
+                    manual = path.parent / "evaluation-manual.json"
+                    if manual.exists():
+                        summary["manual_evaluation"] = json.loads(manual.read_text(encoding="utf8"))
                     output.append(summary)
                 except (OSError, json.JSONDecodeError):
                     continue
         return output
+
+    @app.post("/api/runs/{run_id}/rename")
+    def rename_run(run_id, body: dict):
+        name = body.get("name")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or any(ord(c) < 32 for c in name):
+            raise HTTPException(400, "Use a name of 1–80 characters without line breaks.")
+        with state.lock:
+            directory = state.run_directory(run_id)
+            save_json(directory / "metadata.json", {"name": name.strip()})
+        return {"run_id": run_id, "name": name.strip()}
+
+    @app.post("/api/runs/{run_id}/delete")
+    def delete_run(run_id):
+        with state.lock:
+            directory = state.run_directory(run_id)  # Resolved directory must be a direct child of runs_root.
+            if state.worker and state.worker.is_alive() and state.status.get("run_id") in (None, run_id):
+                raise HTTPException(409, "Stop training before deleting this run.")
+            if state.evaluation_worker and state.evaluation_worker.is_alive() and \
+                    state.evaluation_status.get("run_id") == run_id:
+                raise HTTPException(409, "Stop evaluation before deleting this run.")
+            shutil.rmtree(directory)
+            if state.simulation_source == run_id:
+                state.simulation = state.simulation_model = state.simulation_source = None
+                state.trails = Trajectories()
+            if state.evaluation_status.get("run_id") == run_id:
+                state.evaluation_status = {"status": "idle"}
+        return {"deleted": run_id}
 
     @app.get("/api/runs/{run_id}/config")
     def run_config(run_id):
         return json.loads((state.run_directory(run_id) / "config.json").read_text(encoding="utf8"))
 
     @app.post("/api/runs/{run_id}/load")
-    def load(run_id, body: dict):
-        directory = state.run_directory(run_id)
-        filename = body.get("checkpoint", "best.pt")
-        if filename not in [p.name for p in directory.glob("*.pt")]:
-            raise HTTPException(404, "Checkpoint does not exist.")
-        model, config, _ = load_checkpoint(directory / filename)
+    def load(run_id, body: PlaybackRequest):
         with state.lock:
+            directory = state.run_directory(run_id)
+            filename = body.checkpoint
+            if filename not in [p.name for p in directory.glob("*.pt")]:
+                raise HTTPException(404, "Checkpoint does not exist.")
+            model, config, _ = load_checkpoint(directory / filename)
             state.simulation_model = model
+            state.simulation_source = run_id
             state.simulation = OpusTeamEnv(config.scenario)
-            state.simulation.reset(seed=config.training.seed + 10000)
-            return {"config": config.model_dump(), "frame": state.simulation.frame()}
+            seed = body.seed if body.seed is not None else config.training.seed + 10000
+            state.simulation.reset(seed=seed)
+            state.simulation.action_space.seed(seed)
+            state.simulation_episode = 1
+            state.reset_trails()
+            return {"config": config.model_dump(), "frame": state.simulation_frame(body.trail_steps)}
 
     @app.post("/api/runs/{run_id}/evaluate")
-    def evaluate_run(run_id, body: dict):
+    def evaluate_run(run_id, body: EvaluationRequest):
         directory = state.run_directory(run_id)
-        filename = body.get("checkpoint", "best.pt")
+        filename = body.checkpoint
         if filename not in [p.name for p in directory.glob("*.pt")]:
             raise HTTPException(404, "Checkpoint does not exist.")
-        episodes = int(body.get("episodes", 2))
-        if not 1 <= episodes <= 100:
-            raise HTTPException(400, "Choose 1–100 evaluation episodes.")
         model, config, _ = load_checkpoint(directory / filename)
-        scenario = ScenarioConfig.model_validate(body["scenario"]) if "scenario" in body else config.scenario
+        scenario = body.scenario or config.scenario
         scenario.reward_mode = config.scenario.reward_mode
         if model.algorithm == "mappo" and sum(t.available_count for t in scenario.station_types) != model.station_slots:
             raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
-        result = evaluate(scenario, model, episodes, seed=config.training.seed + 10000,
-                          include_frame=True)
+        seed = body.seed if body.seed is not None else config.training.seed + 10000
+        result = evaluate(scenario, model, body.episodes, seed=seed, policy=body.policy,
+                          include_frame=True, trail_steps=body.trail_steps)
         save_json(directory / "evaluation-manual.json", {k: v for k, v in result.items() if k != "frame"})
         return result
+
+    def start_evaluation(scenario, model, body, directory=None):
+        with state.lock:
+            if state.evaluation_worker and state.evaluation_worker.is_alive():
+                raise HTTPException(409, "An evaluation is already running.")
+            state.evaluation_stop = threading.Event()
+            state.evaluation_status = {"status": "running", "job_id": uuid4().hex,
+                "run_id": directory.name if directory else None,
+                "checkpoint": body.checkpoint if directory else None, "policy": body.policy,
+                "episode": 1, "episodes": body.episodes, "step": 0, "episode_length": scenario.horizon}
+            started = time.perf_counter()
+
+            def progress(update):
+                with state.lock:
+                    state.evaluation_status.update(**update, elapsed_seconds=time.perf_counter() - started)
+
+            def work():
+                try:
+                    result = evaluate(scenario, model, body.episodes, seed=body.seed or 0, policy=body.policy,
+                        stop_event=state.evaluation_stop, include_frame=True, callback=progress,
+                        trail_steps=body.trail_steps)
+                    if directory and result.get("episodes"):
+                        save_json(directory / "evaluation-manual.json", {
+                            **{key: value for key, value in result.items() if key != "frame"},
+                            "checkpoint": body.checkpoint, "policy": body.policy})
+                    with state.lock:
+                        state.evaluation_status.update(status="stopped" if state.evaluation_stop.is_set()
+                            else "completed", result=result, elapsed_seconds=time.perf_counter() - started)
+                except Exception as error:
+                    with state.lock:
+                        state.evaluation_status.update(status="failed", error=str(error))
+
+            state.evaluation_worker = threading.Thread(target=work, daemon=True, name="opus-evaluation")
+            state.evaluation_worker.start()
+            return {"status": "running", "job_id": state.evaluation_status["job_id"]}
+
+    @app.post("/api/runs/{run_id}/evaluation/start")
+    def evaluate_saved(run_id, body: EvaluationRequest):
+        # Reserve the run against deletion before reading its checkpoint.
+        with state.lock:
+            if state.evaluation_worker and state.evaluation_worker.is_alive():
+                raise HTTPException(409, "An evaluation is already running.")
+            directory = state.run_directory(run_id)
+            if body.checkpoint not in [p.name for p in directory.glob("*.pt")]:
+                raise HTTPException(404, "Checkpoint does not exist.")
+            model, config, _ = load_checkpoint(directory / body.checkpoint)
+            scenario = body.scenario or config.scenario
+            scenario.reward_mode = config.scenario.reward_mode
+            if model.algorithm == "mappo" and sum(t.available_count for t in scenario.station_types) != model.station_slots:
+                raise HTTPException(400, "Evaluation station inventory slots must match the trained model.")
+            body = body.model_copy(update={"seed": body.seed if body.seed is not None else config.training.seed + 10000})
+            return start_evaluation(scenario, model, body, directory)
+
+    @app.post("/api/evaluation/start")
+    def evaluate_baseline(body: EvaluationRequest):
+        if body.policy == "model" or body.scenario is None:
+            raise HTTPException(400, "Choose a baseline and define a mission, or select a saved model.")
+        return start_evaluation(body.scenario, None, body)
+
+    @app.get("/api/evaluation/status")
+    def evaluation_status():
+        with state.lock:
+            return state.evaluation_status.copy()
+
+    @app.post("/api/evaluation/stop")
+    def stop_evaluation():
+        with state.lock:
+            state.evaluation_stop.set()
+            if state.evaluation_worker and state.evaluation_worker.is_alive():
+                state.evaluation_status["status"] = "stopping"
+            return {"status": state.evaluation_status["status"]}
 
     @app.get("/api/runs/{run_id}/export")
     def export_run(run_id):

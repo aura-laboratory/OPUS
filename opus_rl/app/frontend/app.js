@@ -1,9 +1,13 @@
 'use strict';
-let config, defaults, schema, presets, hardware, map, polygonLayer, previewLayer, heatLayer, markerGroup;
+let config, defaults, schema, presets, hardware, map, polygonLayer, previewLayer, heatLayer, markerGroup, trailGroup;
 let draft = [], dockPoints = [], mode = 'idle', playing = false, simulationReady = false, currentTab = 'mission';
 let activeJob = false, lastFrame, playGeneration = 0, validationTimer, validationVersion = 0;
 let trainingJob = null, trainingHistory = [], trainingRun = '', trainingMapKey = '', replayConfig = null, idleTrainingFrame = null;
-const viewFrames = {mission:null,runs:null};
+const viewFrames = {mission:null,test:null};
+let selectedRun=null, testBackendReady=false, testEvaluation={status:'idle'}, evaluationResultKey='', pendingDelete=null;
+let fitRequest=0, forceMapFit=false;
+const browserTimes={map:{calls:0,total:0,last:0},readings:{calls:0,total:0,last:0},charts:{calls:0,total:0,last:0}};
+function recordBrowser(name,started){if(currentTab!=='training')return;const row=browserTimes[name];row.calls++;row.last=performance.now()-started;row.total+=row.last;}
 const $ = id => document.getElementById(id);
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fields = {
@@ -269,22 +273,46 @@ function updateRewardEquation() {
   });
 }
 function setTab(tab) {
-  if(tab!==currentTab){pause();simulationReady=false;if(mode==='draw')cancelDrawing();setMode('idle');}
+  if(tab!==currentTab){pause();if(mode==='draw')cancelDrawing();setMode('idle');}
   currentTab=tab;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('selected',b.dataset.tab===tab));
-  for(const key of ['mission','training','runs'])$(key+'-controls').hidden=key!==tab;
+  for(const key of ['mission','training','test'])$(key+'-controls').hidden=key!==tab;
   updateWorkspaceVisibility();
   if(tab==='training'){trainingMapKey='';renderTraining();}
   else if(viewFrames[tab])applyFrame(viewFrames[tab]);
-  map?.invalidateSize();
-  if(tab==='runs')loadRuns().catch(e=>notice(e.message,true));
+  scheduleMapFit(true);
+  if(tab==='test'){loadRuns().catch(e=>notice(e.message,true));renderEvaluation();}
 }
 function updateWorkspaceVisibility() {
   document.querySelectorAll('[data-tabs]').forEach(element=>element.hidden=!element.dataset.tabs.split(' ').includes(currentTab));
-  const emptyRun=currentTab==='runs'&&!viewFrames.runs;
-  $('runs-placeholder').hidden=!emptyRun;
-  $('map').hidden=emptyRun||!map;$('map-fallback').hidden=emptyRun||Boolean(map);
-  for(const id of ['simulation-bar','live-metrics','safety-metrics','fleet-status'])$(id).hidden=emptyRun;
-  $('simulation-label').textContent=currentTab==='training'?'Training episode':currentTab==='runs'?'Saved model replay':'Mission preview';
+  $('map').hidden=!map;$('map-fallback').hidden=Boolean(map);
+  $('loaded-model').hidden=currentTab!=='test'||$('simulation-policy').value!=='model'||!selectedRun;
+  $('evaluation-panel').hidden=currentTab!=='test'||testEvaluation.status==='idle';
+  $('simulation-label').textContent=currentTab==='training'?'Training episode':viewFrames.test?.evaluation_preview?'Evaluation · episode 1':'Test';
+}
+function scheduleMapFit(force=false){
+  forceMapFit ||= force;
+  if(!map||fitRequest)return;
+  fitRequest=requestAnimationFrame(()=>{
+    fitRequest=0;const force=forceMapFit;forceMapFit=false;
+    map.invalidateSize({pan:false});
+    const points=lastFrame?.polygon_wgs84;
+    if(!points?.length||(currentTab==='mission'&&mode!=='idle'&&!force))return;
+    const bounds=L.latLngBounds(points.map(p=>[p[1],p[0]]));
+    const target=map.getBoundsZoom(bounds,false,L.point(24,24));
+    if(force||!map.getBounds().contains(bounds)||map.getZoom()<target-.5)
+      map.fitBounds(bounds,{padding:[12,12],animate:false,maxZoom:22});
+  });
+}
+function drawTrails(frame){
+  if(!trailGroup)return;trailGroup.clearLayers();
+  if(currentTab!=='test')return;
+  const length=Number($('test-trail-steps').value),colors=['#73bfff','#94dccd','#bea6f4','#f2c67c'];
+  if(!Number.isInteger(length)||length<=0)return;
+  for(const trail of frame.trails||[]){
+    const points=trail.points.slice(-length-1).map(p=>[p[1],p[0]]);
+    if(points.length>1)L.polyline(points,{color:colors[trail.inventory_index%colors.length],weight:2.5,opacity:.9})
+      .addTo(trailGroup).bindTooltip('UAV '+(trail.inventory_index+1));
+  }
 }
 function setMode(value) {
   mode=value;
@@ -313,21 +341,88 @@ function syncDocks() {
   renderLaunchFields();drawDocks();changed();
 }
 function uavLabel(u){const id='UAV '+((u.inventory_index??u.id)+1);return id+(u.type&&u.type!==id?' · '+u.type:'');}
-function applyTelemetry(frame){const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-p10').textContent=c.p10.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';
+function applyTelemetry(frame){const started=performance.now();const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-p10').textContent=c.p10.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';
   $('reward-label').textContent=frame.info.reward_mode==='individual'?'Mean UAV reward':'Team reward';
   $('metric-reward').parentElement.dataset.help=frame.info.reward_mode==='individual'?fieldHelp.live_reward:'Team reward for the latest step, using this legacy MAPPO model’s original reward definition. This is not a cumulative episode return.';
   const fleet=$('fleet-status'),key=frame.uavs.map(u=>u.inventory_index??u.id).join(',');
   if(fleet.dataset.fleet!==key){fleet.dataset.fleet=key;fleet.innerHTML=frame.uavs.map(()=>`<div class="uav-status" data-help="${escapeHTML(fieldHelp.fleet_reading)}" tabindex="0"><span class="status-dot"></span><strong></strong><span></span></div>`).join('');}
   frame.uavs.forEach((u,index)=>{const row=fleet.children[index];row.children[0].className='status-dot '+u.status;row.children[1].textContent=uavLabel(u);row.children[2].textContent=`${(u.battery_ratio*100).toFixed(1)}% · ${u.status}${Number.isFinite(u.reward)?' · reward '+u.reward.toFixed(3):''}`;});
+  recordBrowser('readings',started);
 }
-function applyFrame(frame,fit=false){lastFrame=frame;if(currentTab!=='training')viewFrames[currentTab]=frame;applyTelemetry(frame);if(currentTab==='mission')$('area-summary').textContent=`${(frame.area_m2/10000).toFixed(2)} ha · ${frame.cell_size_m.toFixed(3)} m cells`;
-  if(!map)return;drawPolygon(frame.polygon_wgs84);if(fit)map.fitBounds(polygonLayer.getBounds().pad(.2));markerGroup.clearLayers();for(const [i,s] of frame.stations.entries()){L.marker([s.geographic[1],s.geographic[0]],{icon:dockIcon(i)}).addTo(markerGroup).bindTooltip(`Dock ${i+1}${s.reserved!==null?' · reserved':''}${s.occupied!==null?' · charging':''}`);}for(const u of frame.uavs){if(u.status==='queued')continue;L.marker([u.geographic[1],u.geographic[0]],{icon:uavIcon(u.inventory_index??u.id,u.status,frame.stations.some(s=>Math.hypot(s.position[0]-u.position[0],s.position[1]-u.position[1])<1))}).addTo(markerGroup).bindTooltip(`${escapeHTML(uavLabel(u))} · ${u.position[2].toFixed(1)} m · ${Math.round(u.battery_ratio*100)}%`);}
-  const size=frame.heatmap.length,canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;const ctx=canvas.getContext('2d'),pixels=ctx.createImageData(size,size);for(let row=0;row<size;row++)for(let col=0;col<size;col++){const value=frame.heatmap[row][col],offset=((size-1-row)*size+col)*4;pixels.data[offset]=235;pixels.data[offset+1]=165;pixels.data[offset+2]=65;pixels.data[offset+3]=Math.round(Math.min(1,value*4)*170*frame.heatmap_mask[row][col]);}ctx.putImageData(pixels,0,0);if(heatLayer)heatLayer.remove();heatLayer=L.imageOverlay(canvas.toDataURL(),frame.bounds_wgs84.map(p=>[p[1],p[0]]),{opacity:.8,interactive:false}).addTo(map);polygonLayer.bringToFront();}
+function applyFrame(frame,fit=false){
+  lastFrame=frame;if(currentTab!=='training')viewFrames[currentTab]=frame;
+  if(currentTab==='test')$('simulation-label').textContent=frame.evaluation_preview?'Evaluation · episode 1':'Test';
+  if(currentTab!=='mission')applyTelemetry(frame);
+  if(currentTab==='mission')$('area-summary').textContent=`${(frame.area_m2/10000).toFixed(2)} ha · ${frame.cell_size_m.toFixed(3)} m cells`;
+  if(!map)return;
+  const started=performance.now();
+  drawPolygon(frame.polygon_wgs84);markerGroup.clearLayers();
+  for(const [i,s] of frame.stations.entries())L.marker([s.geographic[1],s.geographic[0]],{icon:dockIcon(i)}).addTo(markerGroup).bindTooltip(`Dock ${i+1}${s.reserved!==null?' · reserved':''}${s.occupied!==null?' · charging':''}`);
+  for(const u of frame.uavs){
+    if(u.status==='queued')continue;
+    const atDock=frame.stations.some(s=>Math.hypot(s.position[0]-u.position[0],s.position[1]-u.position[1])<1);
+    L.marker([u.geographic[1],u.geographic[0]],{icon:uavIcon(u.inventory_index??u.id,u.status,atDock)}).addTo(markerGroup)
+      .bindTooltip(`${escapeHTML(uavLabel(u))} · ${u.position[2].toFixed(1)} m · ${Math.round(u.battery_ratio*100)}%`);
+  }
+  if(heatLayer){heatLayer.remove();heatLayer=null;}
+  if(currentTab!=='mission'){
+    const size=frame.heatmap.length,canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;
+    const ctx=canvas.getContext('2d'),pixels=ctx.createImageData(size,size);
+    for(let row=0;row<size;row++)for(let col=0;col<size;col++){
+      const value=frame.heatmap[row][col],offset=((size-1-row)*size+col)*4;
+      pixels.data[offset]=235;pixels.data[offset+1]=165;pixels.data[offset+2]=65;
+      pixels.data[offset+3]=Math.round(Math.min(1,value*4)*170*frame.heatmap_mask[row][col]);
+    }
+    ctx.putImageData(pixels,0,0);
+    heatLayer=L.imageOverlay(canvas.toDataURL(),frame.bounds_wgs84.map(p=>[p[1],p[0]]),{opacity:.8,interactive:false}).addTo(map);
+  }
+  polygonLayer.bringToFront();drawTrails(frame);scheduleMapFit(fit);recordBrowser('map',started);
+}
 async function validate(){if(!await checkFields())throw Error('Correct the highlighted fields.');const result=await api('/api/validate',config);idleTrainingFrame=result.frame;viewFrames.mission=result.frame;setMode('idle');applyFrame(result.frame,true);return result;}
 function pause(){playing=false;playGeneration++;$('play-simulation').textContent='Play';}
-async function reset(stopPlay=true){const tab=currentTab;if(tab==='training')return;if(tab==='mission'&&!await checkFields())throw Error('Correct the highlighted fields.');if(stopPlay)pause();setMode('idle');const frame=await api('/api/simulation/reset',tab==='runs'?replayConfig:config);viewFrames[tab]=frame;if(currentTab===tab){simulationReady=true;applyFrame(frame,true);}}
-async function step(){const tab=currentTab;if(tab==='training')return;if(!simulationReady)await reset(false);if(currentTab!==tab)return;const frame=await api('/api/simulation/step',{policy:tab==='runs'?'model':$('simulation-policy').value});viewFrames[tab]=frame;if(currentTab===tab)applyFrame(frame);}
-async function play(){if(playing){pause();return;}playing=true;const generation=++playGeneration;$('play-simulation').textContent='Pause';while(playing&&generation===playGeneration){try{await step();}catch(e){notice(e.message,true);pause();}if(playing&&generation===playGeneration)await new Promise(r=>setTimeout(r,120));}}
+const testInputs={trail_steps:'test-trail-steps',playback_rate:'test-playback-rate',episodes:'test-episodes',seed:'test-seed'};
+function checkTestInput(input){
+  const valid=Number.isFinite(input.valueAsNumber)&&input.validity.valid,field=input.closest('.field'),error=field.querySelector('.field-error');
+  field.classList.toggle('invalid',!valid);error.hidden=valid;
+  if(valid){input.removeAttribute('aria-invalid');error.textContent='';}
+  else{input.setAttribute('aria-invalid','true');error.textContent=`Choose ${input.step==='1'?'a whole number':'a number'} from ${input.min} to ${input.max}.`;}
+  return valid;
+}
+function testSettings(){
+  const valid=Object.values(testInputs).map(id=>checkTestInput($(id))).every(Boolean);
+  if(!valid)throw Error('Correct the highlighted testing fields.');
+  return Object.fromEntries(Object.entries(testInputs).map(([key,id])=>[key,$(id).valueAsNumber]));
+}
+async function requireTestBackend(){
+  if(!testBackendReady)testBackendReady=(await api('/api/health')).test_controls_revision===1;
+  if(!testBackendReady)throw Error('Restart OPUS to load the Test controls.');
+}
+async function reset(stopPlay=true){
+  if(currentTab!=='test')return;
+  const settings=testSettings(),policy=$('simulation-policy').value;
+  await requireTestBackend();
+  if(policy==='model'&&!selectedRun)throw Error('Select Replay on a saved run first.');
+  if(policy!=='model'&&!await checkFields())throw Error('Correct the mission fields.');
+  if(stopPlay)pause();
+  const testConfig=structuredClone(policy==='model'?replayConfig:config);testConfig.training.seed=settings.seed;
+  const frame=await api(`/api/simulation/reset?trail_steps=${settings.trail_steps}`,testConfig);
+  simulationReady=true;viewFrames.test=frame;if(currentTab==='test')applyFrame(frame,true);
+}
+async function step(){
+  if(currentTab!=='test')return;const settings=testSettings();
+  if(!simulationReady)await reset(false);if(currentTab!=='test')return;
+  const frame=await api('/api/simulation/step',{policy:$('simulation-policy').value,trail_steps:settings.trail_steps});
+  viewFrames.test=frame;if(currentTab==='test')applyFrame(frame);
+}
+async function play(){
+  if(playing){pause();return;}testSettings();playing=true;
+  const generation=++playGeneration;$('play-simulation').textContent='Pause';
+  while(playing&&generation===playGeneration){
+    const began=performance.now();
+    try{await step();}catch(e){notice(e.message,true);pause();}
+    if(playing&&generation===playGeneration)await new Promise(resolve=>setTimeout(resolve,Math.max(0,1000/Number($('test-playback-rate').value)-(performance.now()-began))));
+  }
+}
 function diagnostics(metrics) {
   if(!metrics){$('training-diagnostics').innerHTML='<p class="muted">Available after the first rollout.</p>';return;}
   const entries=[['Policy loss','actor_loss'],['Critic loss','value_loss'],['Gaussian entropy','entropy'],['Approximate KL','approximate_kl'],['Explained variance','explained_variance'],['Coverage actor fraction','actor_sample_fraction'],['Energy · Wh/decision','energy_Wh_per_step'],['Projection fraction','reward_projection'],['Collision fraction','reward_collision'],['Crashed fraction','reward_crash']];
@@ -338,12 +433,21 @@ function diagnostics(metrics) {
 const timingLabels={initialization:'Initialization',policy:'Policy inference',simulation:'Simulation',bootstrap:'Next-state value',buffer:'Buffer / bookkeeping',reset:'Episode reset',update:'Weight update',evaluation:'Evaluation',checkpoint:'Checkpoint saving',logging:'Logging',telemetry:'Live reporting','simulation.motion_safety':'Motion / safety','simulation.camera':'Camera','simulation.coverage_reward':'Coverage / rewards','simulation.observation':'Observation'};
 function timingDiagnostics(rows) {
   const entries=Object.entries(rows||{});
-  if(!entries.length){delete $('timing-diagnostics').dataset.phases;$('timing-diagnostics').innerHTML='<p class="muted">Available during training.</p>';return;}
+  if(!entries.length){delete $('timing-diagnostics').dataset.phases;$('timing-diagnostics').innerHTML='<p class="muted">Available during training.</p>';browserDiagnostics();return;}
   const keys=Object.keys(timingLabels).filter(key=>rows[key]&&!key.includes('.'));
   const display=keys.flatMap(key=>key==='simulation'?[key,...Object.keys(timingLabels).filter(name=>name.startsWith('simulation.')&&rows[name])]:[key]);
   const holder=$('timing-diagnostics'),signature=display.join(',');
   if(holder.dataset.phases!==signature){holder.dataset.phases=signature;holder.innerHTML='<table><thead><tr><th>Phase</th><th tabindex="0" data-help="Total wall-clock seconds spent in this phase since training began.">Total s</th><th tabindex="0" data-help="Mean milliseconds per call. Simulation and inference are called per step; weight updates and evaluation run less often.">ms/call</th><th tabindex="0" data-help="Share of measured top-level processing time. Indented simulator rows are parts of Simulation and are not added to the total twice.">%</th></tr></thead><tbody>'+display.map(key=>`<tr tabindex="0" class="${key.includes('.')?'subphase':''}"><td>${timingLabels[key]}</td><td></td><td></td><td></td></tr>`).join('')+'</tbody></table>';}
   holder.querySelectorAll('tbody tr').forEach((node,index)=>{const row=rows[display[index]];node.dataset.help=`${row.calls} calls · last ${(1000*row.last_seconds).toFixed(2)} ms · slowest ${(1000*row.max_seconds).toFixed(2)} ms`;node.children[1].textContent=row.seconds.toFixed(2);node.children[2].textContent=row.mean_ms.toFixed(2);node.children[3].textContent=row.percent.toFixed(1);});
+  browserDiagnostics();
+}
+function browserDiagnostics(){
+  const holder=$('timing-diagnostics');
+  if(!$('browser-diagnostics')){const node=document.createElement('div');node.id='browser-diagnostics';node.className='browser-timing';node.tabIndex=0;node.dataset.help=fieldHelp.browser_drawing;holder.append(node);}
+  $('browser-diagnostics').textContent='Browser mean ms/refresh · '+[['Map','map'],['Readings','readings'],['Plots','charts']].map(([label,key])=>`${label} ${browserTimes[key].calls?(browserTimes[key].total/browserTimes[key].calls).toFixed(2):'—'}`).join(' · ');
+  if(!$('map-refresh-info')){const node=document.createElement('div');node.id='map-refresh-info';node.tabIndex=0;node.dataset.help=fieldHelp.map_refresh;holder.append(node);}
+  const job=trainingJob;
+  $('map-refresh-info').textContent=job?.frame_step_delta?`Last map refresh: ${job.frame_step_delta} steps · ${job.frame_simulated_delta} simulated s`:'';
 }
 function chart(id,history,key,color){
   const canvas=$(id),ratio=window.devicePixelRatio||1,w=canvas.clientWidth;
@@ -372,7 +476,7 @@ function renderTraining(){
   const evaluation=job.evaluation_progress;
   if(job.phase==='evaluating'&&activeJob&&evaluation)phase+=` · episode ${evaluation.episode} / ${evaluation.episodes} · step ${evaluation.step} / ${evaluation.episode_length}`;
   $('training-phase').textContent=phase;
-  chart('coverage-chart',trainingHistory,'mean_coverage','#e9b36c');chart('reward-chart',trainingHistory,'mean_step_reward','#8cb9cd');
+  const chartStarted=performance.now();chart('coverage-chart',trainingHistory,'mean_coverage','#e9b36c');chart('reward-chart',trainingHistory,'mean_step_reward','#8cb9cd');recordBrowser('charts',chartStarted);
 }
 async function poll(){
   try{
@@ -390,51 +494,116 @@ async function poll(){
     if(job.total_steps){$('progress-fill').style.width=Math.min(100,100*job.steps/job.total_steps)+'%';$('progress-text').textContent=`${(job.steps||0).toLocaleString()} / ${job.total_steps.toLocaleString()} steps · ${Number(job.steps_per_second||0).toFixed(1)} steps/s`;}
     if(currentTab==='training')renderTraining();
     diagnostics(job.metrics);timingDiagnostics(job.timings);
+    if(testBackendReady&&!evaluationStarting){
+      try{testEvaluation=await api('/api/evaluation/status');renderEvaluation();}
+      catch(error){$('evaluation-progress').textContent=error.message;}
+    }
     if(job.status==='failed'&&job.error!==poll.lastError){notice(job.error,true);poll.lastError=job.error;}
   }catch(e){$('connection-status').textContent='Backend disconnected';}
   setTimeout(poll,500);
 }
+function updateLoadedName(){
+  $('loaded-model').textContent=selectedRun?`${selectedRun.name} · ${selectedRun.checkpoint}`:'';
+  updateWorkspaceVisibility();
+}
+async function chooseRun(run,checkpoint){
+  const settings=testSettings();pause();await requireTestBackend();
+  const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint,seed:settings.seed,trail_steps:settings.trail_steps});
+  selectedRun={run_id:run.run_id,name:run.name||run.run_id,checkpoint};replayConfig=result.config;
+  $('simulation-policy').querySelector('[value="model"]').disabled=false;$('simulation-policy').value='model';
+  simulationReady=true;viewFrames.test=result.frame;updateLoadedName();
+  if(currentTab==='test')applyFrame(result.frame,true);
+}
+let evaluationStarting=false;
+async function startEvaluation(run=null,checkpoint=null){
+  const settings=testSettings();await requireTestBackend();pause();
+  evaluationStarting=true;testEvaluation={status:'starting',episode:1,episodes:settings.episodes,step:0};renderEvaluation();
+  try{
+    if(run)await chooseRun(run,checkpoint);
+    const policy=$('simulation-policy').value;
+    const body={policy,episodes:settings.episodes,seed:settings.seed,trail_steps:settings.trail_steps};
+    if(policy==='model'){
+      if(!selectedRun)throw Error('Select Replay on a saved run first.');
+      body.checkpoint=selectedRun.checkpoint;
+    }else{if(!await checkFields())throw Error('Correct the mission fields.');body.scenario=config.scenario;}
+    const response=await api(policy==='model'?`/api/runs/${encodeURIComponent(selectedRun.run_id)}/evaluation/start`:'/api/evaluation/start',body);
+    testEvaluation={...testEvaluation,...response,run_id:policy==='model'?selectedRun.run_id:null};
+  }catch(error){testEvaluation={status:'failed',error:error.message};throw error;}
+  finally{evaluationStarting=false;renderEvaluation();}
+  $('evaluation-panel').scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+function renderEvaluation(){
+  const job=testEvaluation,busy=['starting','running','stopping'].includes(job.status);
+  $('evaluation-panel').hidden=currentTab!=='test'||job.status==='idle';
+  $('evaluate-policy').disabled=busy;$('stop-evaluation').hidden=!busy;$('stop-evaluation').disabled=job.status==='starting';
+  document.querySelectorAll('.evaluate').forEach(button=>button.disabled=busy);
+  if(job.status==='idle')return;
+  const total=(job.episodes||1)*(job.episode_length||1),done=((job.episode||1)-1)*(job.episode_length||1)+(job.step||0);
+  $('evaluation-fill').style.width=(job.status==='completed'?100:Math.min(100,100*done/total))+'%';
+  const source=job.run_id?(selectedRun?.run_id===job.run_id?selectedRun.name:job.run_id):job.policy==='random'?'Random actions':'Circular baseline';
+  $('evaluation-progress').textContent=busy?`${job.status==='stopping'?'Stopping evaluation':'Evaluating'} · ${source} · episode ${job.episode||1} / ${job.episodes||1} · step ${job.step||0}${job.episode_length?' / '+job.episode_length:''} · ${Number(job.elapsed_seconds||0).toFixed(1)} s`:
+    job.status==='failed'?job.error:`${job.status==='stopped'?'Stopped':'Completed'} · ${source} · ${job.result?.episodes||0} episodes · ${Number(job.elapsed_seconds||0).toFixed(1)} s`;
+  if(!job.result){$('evaluation-result').replaceChildren();return;}
+  const key=job.job_id+':'+job.status;
+  if(key===evaluationResultKey)return;evaluationResultKey=key;
+  const result=job.result;
+  if(result.episodes){
+    const rows=[['Mean return','return_mean','evaluation_return'],['Mean quality','coverage_mean','evaluation_quality'],['Final 10th percentile','p10_final','evaluation_p10'],['Final fairness','fairness_final','evaluation_fairness'],['Energy / episode · Wh','energy_Wh','evaluation_energy'],['Crashes / episode','crashed_uavs','evaluation_crashes']];
+    $('evaluation-result').innerHTML='<dl class="result-details">'+rows.map(([label,key,help])=>`<div tabindex="0" data-help="${escapeHTML(fieldHelp[help])}"><dt>${label}</dt><dd>${Number(result[key]).toFixed(3)}</dd></div>`).join('')+'</dl>';
+  }else $('evaluation-result').textContent='No complete episodes.';
+  if(result.frame){
+    pause();
+    viewFrames.test={...result.frame,evaluation_preview:true};simulationReady=false;
+    if(currentTab==='test')applyFrame(viewFrames.test,true);
+  }
+}
 async function loadRuns(){
   const runs=await api('/api/runs');$('run-list').innerHTML='';
-  if(!runs.length){$('run-list').innerHTML='<p class="muted">No runs yet. Start an experiment in Training.</p>';return;}
+  if(!runs.length){$('run-list').innerHTML='<p class="muted">No saved runs.</p>';return;}
   for(const run of runs){
-    const item=document.createElement('div');item.className='run-block';const evaluation=run.evaluation;
-    item.innerHTML=`<h3>${escapeHTML(run.run_id)}</h3><p>${escapeHTML(run.algorithm||'mappo').toUpperCase()} · ${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No scheduled evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a></div>`;
-    item.querySelector('.replay').onclick=async()=>{
-      try{
-        pause();const checkpoint=item.querySelector('select').value;
-        const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint});
-        replayConfig=result.config;simulationReady=currentTab==='runs';viewFrames.runs=result.frame;
-        $('loaded-model').textContent=`${run.run_id} · ${checkpoint}`;
-        if(currentTab==='runs'){updateWorkspaceVisibility();applyFrame(result.frame,true);}
-      }catch(e){notice(e.message,true);}
+    const item=document.createElement('div');item.className='run-block';const evaluation=run.manual_evaluation||run.evaluation;
+    item.innerHTML=`<div class="run-heading"><input class="run-name" aria-label="Run name" value="${escapeHTML(run.name||run.run_id)}" maxlength="80"><button class="rename" disabled>Save name</button></div><p>${escapeHTML(run.algorithm||'mappo').toUpperCase()} · ${escapeHTML(run.status)} · ${run.steps.toLocaleString()} steps · seed ${run.seed}<br>${evaluation?'Last evaluation return '+evaluation.return_mean.toFixed(2)+' · mean quality '+evaluation.coverage_mean.toFixed(3):'No evaluation recorded.'}</p><label>Checkpoint<select>${run.checkpoints.map(c=>`<option ${c==='best.pt'?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></label><div class="toolbar"><button class="replay">Replay</button><button class="evaluate">Evaluate</button><a href="/api/runs/${encodeURIComponent(run.run_id)}/export">Export ZIP</a><button class="delete text-button danger">Delete</button></div>`;
+    const replay=item.querySelector('.replay');
+    replay.onclick=async()=>{replay.disabled=true;replay.textContent='Loading…';try{await chooseRun(run,item.querySelector('select').value);}catch(e){notice(e.message,true);}finally{replay.disabled=false;replay.textContent='Replay';}};
+    item.querySelector('.evaluate').onclick=async()=>{try{await startEvaluation(run,item.querySelector('select').value);}catch(e){notice(e.message,true);}};
+    const name=item.querySelector('.run-name'),save=item.querySelector('.rename');
+    name.oninput=()=>save.disabled=!name.value.trim()||name.value.trim()===(run.name||run.run_id);
+    save.onclick=async()=>{
+      save.disabled=true;
+      try{await requireTestBackend();const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/rename`,{name:name.value});run.name=result.name;name.value=result.name;if(selectedRun?.run_id===run.run_id){selectedRun.name=result.name;updateLoadedName();}}
+      catch(e){notice(e.message,true);save.disabled=false;}
     };
-    item.querySelector('.evaluate').onclick=async(event)=>{
-      event.target.disabled=true;pause();
-      try{
-        const checkpoint=item.querySelector('select').value;
-        const result=await api(`/api/runs/${encodeURIComponent(run.run_id)}/evaluate`,{checkpoint,episodes:config.training.evaluation_episodes});
-        // Load the same checkpoint for subsequent replay controls.
-        const loaded=await api(`/api/runs/${encodeURIComponent(run.run_id)}/load`,{checkpoint});
-        replayConfig=loaded.config;simulationReady=false;viewFrames.runs=result.frame;
-        $('loaded-model').textContent=`${run.run_id} · ${checkpoint}`;
-        if(currentTab==='runs'){updateWorkspaceVisibility();applyFrame(result.frame,true);}
-        notice(`Evaluation: return ${result.return_mean.toFixed(2)} · mean quality ${result.coverage_mean.toFixed(3)} · crashes ${result.crashed_uavs.toFixed(1)}`);
-      }catch(e){notice(e.message,true);}finally{event.target.disabled=false;}
-    };
-    attachFieldHelp(item.querySelector('select'),'checkpoint');$('run-list').append(item);
+    item.querySelector('.delete').onclick=()=>{pendingDelete=run;$('delete-run-name').textContent=run.name||run.run_id;$('delete-run-dialog').showModal();};
+    attachFieldHelp(item.querySelector('select'),'checkpoint');attachFieldHelp(name,'run_name');$('run-list').append(item);
   }
+  renderEvaluation();
+}
+async function deleteSelectedRun(){
+  if(!pendingDelete)return;const run=pendingDelete;
+  await requireTestBackend();await api(`/api/runs/${encodeURIComponent(run.run_id)}/delete`,{});
+  $('delete-run-dialog').close();pendingDelete=null;
+  if(selectedRun?.run_id===run.run_id){
+    pause();selectedRun=null;replayConfig=null;simulationReady=false;
+    $('simulation-policy').value='heuristic';$('simulation-policy').querySelector('[value="model"]').disabled=true;
+    viewFrames.test=idleTrainingFrame;updateLoadedName();if(currentTab==='test')applyFrame(viewFrames.test,true);
+  }
+  if(testEvaluation.run_id===run.run_id){testEvaluation={status:'idle'};evaluationResultKey='';renderEvaluation();}
+  await loadRuns();
 }
 
 async function initialize() {
   try {
-    const [response,area]=await Promise.all([api('/api/defaults'),api('/static/default-area.json')]);
+    const [response,area,health]=await Promise.all([api('/api/defaults'),api('/static/default-area.json'),api('/api/health')]);
+    testBackendReady=health.test_controls_revision===1;
     defaults=response.config;schema=response.schema;presets=response.presets;hardware=response.hardware||null;config=structuredClone(defaults);
     Object.assign(config.scenario,area);normalizeMission(config.scenario);renderForms();
     if(window.L) {
-      map=L.map('map',{doubleClickZoom:false}).setView([...config.scenario.map_origin_wgs84].reverse(),18);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+      map=L.map('map',{doubleClickZoom:false,zoomSnap:.05,zoomDelta:.5,preferCanvas:true,maxZoom:22}).setView([...config.scenario.map_origin_wgs84].reverse(),18);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:22,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
       markerGroup=L.layerGroup().addTo(map);
+      trailGroup=L.layerGroup().addTo(map);
+      map.on('moveend',()=>{if(currentTab!=='mission')scheduleMapFit();});
+      if(window.ResizeObserver)new ResizeObserver(()=>scheduleMapFit()).observe(map.getContainer());
       map.on('click',event=>{
         if(mode==='draw'){draft.push([event.latlng.lng,event.latlng.lat]);drawPolygon(draft);}
         else if(mode==='dock'){if(dockPoints.length>=dockCount()){notice('All docks are placed.');return;}dockPoints.push({type:0,geographic:[event.latlng.lng,event.latlng.lat]});syncDocks();}
@@ -448,10 +617,27 @@ async function initialize() {
         }
       });
     } else {$('map').hidden=true;$('map-fallback').hidden=false;}
-    const initial=await api('/api/validate',config);idleTrainingFrame=initial.frame;applyFrame(initial.frame,true);
+    const initial=await api('/api/validate',config);idleTrainingFrame=initial.frame;viewFrames.test=initial.frame;applyFrame(initial.frame,true);
     dockPoints=initial.frame.stations.map(s=>({type:0,geographic:s.geographic}));
     document.querySelectorAll('nav button').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));
-    action('validate',validate);action('reset-simulation',()=>reset());action('step-simulation',step);$('play-simulation').onclick=play;
+    action('validate',validate);action('reset-simulation',()=>reset());action('step-simulation',step);$('play-simulation').onclick=()=>play().catch(e=>notice(e.message,true));
+    $('simulation-policy').onchange=()=>{pause();simulationReady=false;reset().catch(e=>notice(e.message,true));updateWorkspaceVisibility();};
+    for(const [key,id] of Object.entries(testInputs)){
+      const input=$(id);input.required=true;
+      input.oninput=()=>{
+        if(!checkTestInput(input))return;
+        if(key==='seed')simulationReady=false;
+        if(key==='trail_steps'&&currentTab==='test'){
+          drawTrails(viewFrames.test);const previous=viewFrames.test;
+          if(simulationReady&&!playing&&!previous?.evaluation_preview)
+            api('/api/simulation/frame?trail_steps='+input.valueAsNumber).then(frame=>{if(currentTab==='test'&&viewFrames.test===previous)applyFrame(frame);}).catch(e=>notice(e.message,true));
+        }
+      };
+    }
+    action('evaluate-policy',()=>startEvaluation());
+    action('stop-evaluation',async()=>{await api('/api/evaluation/stop',{});});
+    $('cancel-delete').onclick=()=>{$('delete-run-dialog').close();pendingDelete=null;};
+    action('confirm-delete',deleteSelectedRun);
     $('draw-area').onclick=()=>{
       pause();
       if(mode==='draw'){cancelDrawing();setMode('idle');return;}
