@@ -122,7 +122,7 @@
     "min_altitude_m": 20.0,
     "max_altitude_m": 100.0,
     "required_gsd_m": 0.05,
-    "grid_size": 1024,
+    "grid_size": 512,
     "observation_size": 128,
     "reward": {
       "mean_weight": 0.5,

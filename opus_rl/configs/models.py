@@ -126,7 +126,7 @@ class ScenarioConfig(Config):
     min_altitude_m: float = Field(20, gt=0)
     max_altitude_m: float = Field(100, gt=0)
     required_gsd_m: float = Field(0.05, gt=0)
-    grid_size: int = Field(1024, ge=16, le=2048)
+    grid_size: int = Field(512, ge=16, le=2048)
     observation_size: int = Field(128, ge=8, le=256)
     observation_version: Literal[1, 2] = 2
     reward: RewardConfig | LegacyRewardConfig = Field(default_factory=RewardConfig)
