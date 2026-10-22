@@ -485,7 +485,7 @@ function diagnostics(metrics) {
   if(!holder.querySelector('dl'))holder.innerHTML='<dl>'+entries.map(([label,key])=>`<div tabindex="0" data-help="${escapeHTML(fieldHelp[key]||'')}"><dt>${label}</dt><dd></dd></div>`).join('')+'</dl>';
   holder.querySelectorAll('dd').forEach((node,index)=>node.textContent=Number(metrics[entries[index][1]]).toFixed(3));
 }
-const timingLabels={initialization:'Initialization',policy:'Policy inference',simulation:'Simulation',bootstrap:'Next-state value',buffer:'Buffer / bookkeeping',reset:'Episode reset',update:'Weight update',evaluation:'Evaluation',checkpoint:'Checkpoint saving',logging:'Logging',telemetry:'Live reporting','simulation.motion_safety':'Motion / safety','simulation.camera':'Camera','simulation.camera.allocation':'Map allocation','simulation.camera.pose':'Camera pose','simulation.camera.projection':'Grid projection','simulation.camera.visibility':'FOV / cell gathering','simulation.camera.gsd':'GSD calculation','simulation.camera.quality':'Angle / quality','simulation.camera.statistics':'Camera statistics','simulation.camera.fusion':'Capture fusion','simulation.camera.other':'Other / cleanup','simulation.coverage_reward':'Coverage / rewards','simulation.observation':'Observation'};
+const timingLabels={initialization:'Initialization',policy:'Policy inference',simulation:'Simulation',bootstrap:'Next-state value',buffer:'Buffer / bookkeeping',reset:'Episode reset',update:'Weight update',evaluation:'Evaluation',checkpoint:'Checkpoint saving',logging:'Logging',telemetry:'Live reporting','simulation.motion_safety':'Motion / safety','simulation.camera':'Camera','simulation.camera.allocation':'Map allocation','simulation.camera.pose':'Camera pose','simulation.camera.footprint':'Ground FOV footprint','simulation.camera.candidates':'AoI candidate cells','simulation.camera.projection':'Candidate projection','simulation.camera.visibility':'FOV / cell gathering','simulation.camera.gsd':'GSD calculation','simulation.camera.quality':'Angle / quality','simulation.camera.statistics':'Camera statistics','simulation.camera.fusion':'Capture fusion','simulation.camera.other':'Other / cleanup','simulation.coverage_reward':'Coverage / rewards','simulation.observation':'Observation'};
 function timingDiagnostics(rows) {
   const entries=Object.entries(rows||{});
   if(!entries.length){delete $('timing-diagnostics').dataset.phases;$('timing-diagnostics').innerHTML='<p class="muted">Available during training.</p>';browserDiagnostics();return;}
@@ -820,7 +820,7 @@ async function initialize() {
     });
     action('start-training',async()=>{
       const health=await api('/api/health');
-      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==8)throw Error('Restart OPUS to load the current training controls and episode paths.');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==9)throw Error('Restart OPUS to load the camera optimization and current defaults.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});

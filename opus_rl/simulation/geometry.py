@@ -64,9 +64,11 @@ class Area:
         self.vertices = snapped
         x = low[0] + (np.arange(self.size) + 0.5) * self.cell
         y = low[1] + (np.arange(self.size) + 0.5) * self.cell
+        self.x_axis, self.y_axis = x, y
         self.x, self.y = np.meshgrid(x, y)
         self.mask = intersects_xy(self.polygon, self.x, self.y)
         rasterize_boundary(self.mask, np.rint((snapped - low) / self.cell).astype(int))
+        self.aoi_fraction = float(self.mask.mean())
         if not self.mask.any():
             raise ValueError("Area has no cell centers at the selected grid resolution.")
         self.station_positions = np.asarray(config.station_positions_xy, dtype=float)

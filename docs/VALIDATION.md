@@ -144,6 +144,19 @@ All **81 Python tests** and **16 Node interface logic tests** pass, with Ruff, J
 
 The history slider spans its own full-width row, with timestamp and Live below it. Its domain stays fixed while dragging; the displayed right edge returns to Live even if steps arrive during the drag, and releasing elsewhere preserves the selected step. Interface checks exercise both cases. Coverage/CNN grid descriptions now state N × N dimensions and explain pre-CNN block averaging. The camera geometry and quality model are unchanged. The application was not launched; rendered-browser layout remains unverified.
 
+## Footprint-first camera and 512² defaults: 2026-10-22
+
+All **89 Python tests** and **16 Node interface logic tests** pass, with Ruff (including benchmarks), JavaScript syntax and whitespace checks. Capture comparisons use the frozen prior implementation in `benchmarks/camera_reference.py`: random camera poses across square, concave and starter AoIs, narrow/wide FOVs, horizon/upward views, exact cell-edge boundaries, nearly-zero heights, full views and inactive cameras produce identical quality/GSD arrays and camera statistics. Complete environment transitions also match, including every observation array and per-UAV rewards. Defaults checks verify 512² coverage, 128² observation and exact 4 × 4 mean aggregation. The GSD Jacobian and quality formula are unchanged.
+
+The offline benchmark (`python -m benchmarks.camera_speed`) uses nine alternating-order camera repeats after warmup for each of nine scenario/pose cases per resolution. It also replays the same 20-step, two-UAV starter-mission action tape three times per implementation and resolution. Only `env.step` is timed; setup, correctness hashing, inference, optimization, telemetry rendering and service startup are excluded. Coverage arrays, map observations and complete info hashes match at each resolution. Results from this machine:
+
+| Coverage grid | Prior dense camera: environment ms/step | Footprint-first: environment ms/step | Speedup |
+|---|---:|---:|---:|
+| 512² | 101.39 | 72.83 | 1.39× |
+| 1024² | 348.52 | 292.67 | 1.19× |
+
+The optimization is retained because it improves the same-resolution environment measurement. Combining it with the requested default reduction gives 348.52 → 72.83 ms/step (4.79×), which includes coarser coverage discretization and is not an isolated algorithm speedup. Nearly fully visible square-camera cases are effectively unchanged (about 1.01–1.03×); a contiguous-window fast path avoids gathering almost the entire raster. Small-footprint cases benefit more. These bounded simulator timings are not end-to-end training throughput guarantees. Raw repeat samples are in the ignored local `build/camera-footprint.json`; the tracked benchmark reproduces the comparison without user models or runs. OPUS was not launched or restarted.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

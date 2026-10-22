@@ -73,7 +73,7 @@ python -m pytest -q
 python -m ruff check opus_rl tests
 ```
 
-`configs/learning-smoke.json` is a small, bounded learning experiment. `configs/default.json` uses the full 1024² coverage grid, 128² observation grid, 5-second decisions, λ=0.9, 20–100 m coverage altitude, 500-step episodes and agreed reward weights. Training defaults are 10,000 steps, a 100-step update interval, evaluation/checkpoints every 2,000 steps, 5 evaluation episodes, seed 42, 6 CPU threads (limited by availability) and Auto compute. Configurations also support a reduced grid for development.
+`configs/learning-smoke.json` is a small, bounded learning experiment. `configs/default.json` uses a 512² coverage grid and 128² observation grid (4 × 4 block averaging), 5-second decisions, λ=0.9, 20–100 m coverage altitude, 500-step episodes and agreed reward weights. Training defaults are 10,000 steps, a 100-step update interval, evaluation/checkpoints every 2,000 steps, 5 evaluation episodes, seed 42, 6 CPU threads (limited by availability) and Auto compute. Configurations also support a reduced grid for development.
 
 ## Git repository
 

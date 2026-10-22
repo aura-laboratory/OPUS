@@ -157,7 +157,7 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 8,
+                "training_controls_revision": 9,
                 "test_controls_revision": 3,
                 "frontend_revision": frontend_revision(FRONTEND)}
 

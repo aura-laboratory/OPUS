@@ -288,7 +288,7 @@ class OpusTeamEnv(gym.Env):
         camera_stats = {"valid_cells": 0, "invalid_gsd_cells": 0, "mean_gsd": 0.0, "mean_incidence_deg": 0.0}
         gsd_weight = 0
         self.last_gsd.fill(np.nan)
-        camera_phases = dict.fromkeys(("allocation", "pose", "projection", "visibility", "gsd", "quality",
+        camera_phases = dict.fromkeys(("allocation", "pose", "footprint", "candidates", "projection", "visibility", "gsd", "quality",
                                       "statistics", "fusion"), 0.0)
         camera_phases["allocation"] += time.perf_counter() - phase_started
         for index, uav in enumerate(self.uavs):
