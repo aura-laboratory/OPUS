@@ -5,7 +5,7 @@ let activeJob = false, lastFrame, playGeneration = 0, validationTimer, validatio
 let trainingJob = null, trainingHistory = [], trainingRun = '', trainingMapKey = '', replayConfig = null, idleTrainingFrame = null;
 const viewFrames = {mission:null,test:null};
 const timelineViews={training:newTimelineView(),test:newTimelineView()};
-function newTimelineView(){return {live:true,id:'',step:0,frame:null,sequence:0,dragging:false,timer:null,requesting:false};}
+function newTimelineView(){return {live:true,id:'',step:0,frame:null,sequence:0,dragging:false,dragEnd:null,timer:null,requesting:false};}
 let selectedRun=null, testBackendReady=false, testEvaluation={status:'idle'}, evaluationResultKey='', pendingDelete=null;
 let testHistory=[],testSeriesId='',testPlotSource='playback',evaluationHistory=[],evaluationJobId='',evaluationMapKey='';
 let fitRequest=0, forceMapFit=false;
@@ -17,7 +17,7 @@ const fields = {
   required_gsd_m:['Required GSD','cm/pixel',100], delta_t:['Step time interval ΔT','s'],
   min_altitude_m:['Minimum altitude','m'], max_altitude_m:['Maximum altitude','m'],
   coverage_lambda:['Coverage memory λ',''], horizon:['Episode length','steps'],
-  grid_size:['Coverage grid','cells/side'], observation_size:['Observation grid','cells/side'],
+  grid_size:['Coverage grid','cells/axis'], observation_size:['Observation grid','cells/axis'],
   fixed_count:['Number of docks',''],
   max_horizontal_speed_mps:['Horizontal speed','m/s'], max_climb_speed_mps:['Climb speed','m/s'],
   max_descent_speed_mps:['Descent speed','m/s'], max_horizontal_accel_mps2:['Horizontal acceleration','m/s²'],
@@ -291,7 +291,7 @@ function updateWorkspaceVisibility() {
   document.querySelectorAll('[data-tabs]').forEach(element=>element.hidden=!element.dataset.tabs.split(' ').includes(currentTab));
   $('map').hidden=!map;$('map-fallback').hidden=Boolean(map);
   $('evaluation-panel').hidden=currentTab!=='test'||testEvaluation.status==='idle';
-  $('simulation-label').textContent=currentTab==='training'?'Training episode':viewFrames.test?.evaluation_preview?`Evaluation · episode ${viewFrames.test.episode||1}`:'Test';
+  $('simulation-label').textContent=currentTab==='training'?'Training':viewFrames.test?.evaluation_preview?`Evaluation · episode ${viewFrames.test.episode||1}`:'Test';
 }
 function scheduleMapFit(force=false){
   forceMapFit ||= force;
@@ -309,9 +309,9 @@ function scheduleMapFit(force=false){
 }
 function drawTrails(frame){
   if(!trailGroup)return;trailGroup.clearLayers();
-  if(currentTab!=='test')return;
+  if(!['training','test'].includes(currentTab))return;
   const length=Number($('test-trail-length').value),colors=['#73bfff','#94dccd','#bea6f4','#f2c67c'];
-  if(!Number.isFinite(length)||length<=0)return;
+  if(currentTab==='test'&&(!Number.isFinite(length)||length<=0))return;
   for(const trail of frame.trails||[]){
     const points=trail.points.map(p=>[p[1],p[0]]);
     if(points.length>1)L.polyline(points,{color:colors[trail.inventory_index%colors.length],weight:2.5,opacity:.9})
@@ -334,7 +334,7 @@ function updateTimeline(){
 async function showHistory(context,step){
   const view=timelineViews[context],meta=timelineMetadata(context);if(!meta)return;
   const sequence=++view.sequence;
-  const length=Number($('test-trail-length').value)||0;
+  const length=context==='test'?Number($('test-trail-length').value)||0:0;
   const frame=await api(`/api/visualization/history/${context}?step=${step}&timeline_id=${encodeURIComponent(meta.id)}&trail_length_m=${length}`);
   if(view.live||view.sequence!==sequence||view.id!==meta.id)return;
   view.frame=frame;
@@ -342,7 +342,9 @@ async function showHistory(context,step){
 }
 function scrubHistory(step){
   const context=currentTab,view=timelineViews[context],meta=timelineMetadata();if(!view||!meta)return;
-  if(step===meta.last_step){returnLive();return;}
+  // A live stream can grow while dragging; the visible right edge still means Live.
+  const edge=view.dragging?view.dragEnd??Number($('timeline-slider').max):meta.last_step;
+  if(step===edge){returnLive();return;}
   view.live=false;view.step=step;updateTimeline();queueHistory(context);
 }
 function queueHistory(context){
@@ -358,6 +360,14 @@ function returnLive(){
   if(currentTab==='training'){trainingMapKey='';renderTraining();}
   else if(viewFrames.test)applyFrame(viewFrames.test);
   updateTimeline();
+}
+function beginTimelineDrag(){
+  const view=timelineViews[currentTab];if(!view)return;
+  view.dragEnd=Number($('timeline-slider').max);view.dragging=true;
+}
+function endTimelineDrag(){
+  const view=timelineViews[currentTab];if(!view)return;
+  view.dragging=false;view.dragEnd=null;updateTimeline();
 }
 function setMode(value) {
   mode=value;
@@ -769,8 +779,9 @@ async function initialize() {
     document.querySelectorAll('nav button').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));
     action('validate',validate);action('reset-simulation',()=>reset());action('step-simulation',step);$('play-simulation').onclick=()=>play().catch(e=>notice(e.message,true));
     $('timeline-slider').oninput=event=>scrubHistory(Number(event.target.value));
-    $('timeline-slider').onpointerdown=()=>{if(timelineViews[currentTab])timelineViews[currentTab].dragging=true;};
-    window.addEventListener('pointerup',()=>{if(timelineViews[currentTab]){timelineViews[currentTab].dragging=false;updateTimeline();}});
+    $('timeline-slider').onpointerdown=beginTimelineDrag;
+    $('timeline-slider').onpointercancel=endTimelineDrag;
+    window.addEventListener('pointerup',endTimelineDrag);
     $('timeline-live').onclick=returnLive;
     $('simulation-policy').onchange=()=>{pause();simulationReady=false;reset().catch(e=>notice(e.message,true));updateWorkspaceVisibility();};
     for(const [key,id] of Object.entries(testInputs)){
@@ -809,7 +820,7 @@ async function initialize() {
     });
     action('start-training',async()=>{
       const health=await api('/api/health');
-      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==7)throw Error('Restart OPUS to load the current training controls and coverage model.');
+      if(health.training_algorithm!=='ippo'||health.training_controls_revision!==8)throw Error('Restart OPUS to load the current training controls and episode paths.');
       pause();config.scenario.reward_mode='individual';await validate();await api('/api/training/start',config);
     });
     action('stop-training',async()=>{await api('/api/training/stop',{});});

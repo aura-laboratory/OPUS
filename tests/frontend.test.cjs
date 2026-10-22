@@ -62,12 +62,35 @@ test('Replay framing waits for layout and uses small equal padding',()=>{
   h.run('setTab("test")');h.flush();assert.equal(h.fits.length,2,'tab changes explicitly reframe');
 });
 
-test('Test renders the distance-clipped path and hides it in other tabs',()=>{
+test('Test and Training render UAV paths while Mission hides them',()=>{
   const h=harness();let clears=0;h.context.trailLayer={clearLayers(){clears++;}};
   h.nodes.get('test-trail-length').value='2';
   h.run('trailGroup=trailLayer;currentTab="test";drawTrails({trails:[{inventory_index:0,points:[[2,2],[3,3],[4,4]]}]})');
   assert.equal(h.polylines.length,1);assert.deepEqual(Array.from(h.polylines[0].points,point=>Array.from(point)),[[2,2],[3,3],[4,4]]);
-  h.run('currentTab="mission";drawTrails({trails:[]})');assert.equal(clears,2);
+  h.nodes.get('test-trail-length').value='0';
+  h.run('currentTab="training";drawTrails({trails:[{inventory_index:1,points:[[5,5],[6,6]]}]})');
+  assert.equal(h.polylines.length,2,'training paths are independent of the Test path-length field');
+  assert.deepEqual(Array.from(h.polylines[1].points,point=>Array.from(point)),[[5,5],[6,6]]);
+  h.run('currentTab="mission";drawTrails({trails:[]})');assert.equal(clears,3);
+});
+
+test('History drag keeps its range stable and the visible right edge returns to Live',()=>{
+  const h=harness();
+  h.run('currentTab="training";chart=()=>{};trainingJob={status:"running",timeline:{id:"one",first_step:0,last_step:10,last_seconds:50}};updateTimeline();beginTimelineDrag()');
+  assert.equal(Number(h.nodes.get('timeline-slider').max),10);
+  h.run('scrubHistory(9);trainingJob.timeline.last_step=12;trainingJob.timeline.last_seconds=60;updateTimeline()');
+  assert.equal(Number(h.nodes.get('timeline-slider').max),10,'new steps must not move the drag range');
+  assert.equal(h.run('timelineViews.training.step'),9);
+  h.run('scrubHistory(10)');
+  assert.equal(h.run('timelineViews.training.live'),true,'the frozen right edge follows the live stream');
+  h.run('endTimelineDrag()');
+  assert.equal(Number(h.nodes.get('timeline-slider').max),12);
+  assert.equal(Number(h.nodes.get('timeline-slider').value),12);
+  assert.match(h.nodes.get('timeline-time').textContent,/Live · 60 s/);
+  h.run('beginTimelineDrag();scrubHistory(5);trainingJob.timeline.last_step=15;endTimelineDrag()');
+  assert.equal(Number(h.nodes.get('timeline-slider').value),5,'releasing in history keeps the selected timestamp');
+  assert.equal(Number(h.nodes.get('timeline-slider').max),15);
+  assert.equal(h.run('timelineViews.training.live'),false);
 });
 
 test('Auto-save coalesces edits and serializes in-flight name writes',async()=>{

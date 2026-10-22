@@ -56,7 +56,9 @@ Progress, current episode, simulation time, batteries and rewards are captured e
 
 Pausing finishes the current operation before acknowledging **Paused**; scheduled evaluation can pause between its interactions. Paused waiting time is excluded from processing-time percentages and steps/s. Elapsed time still includes it, and the run summary records `paused_seconds`. Reaching the training budget completes the run automatically.
 
-The time slider in Training and Test browses recorded visualization without stopping the simulator or changing weights. **Live** returns to the newest view. It retains up to 10,000 environment steps in the current server session; positions/readings are recorded each step and historical heatmaps use the nearest earlier map refresh. History is cleared on a new training run or test reset and is not a trajectory-resume checkpoint.
+Training displays each UAV’s retained path for the displayed episode, including when browsing earlier timestamps. Test’s path-length setting does not limit training paths.
+
+The time slider in Training and Test browses recorded visualization without stopping the simulator or changing weights. Its track occupies a separate full-width row, so changing timestamp text cannot resize it. The range stays fixed during a drag; reaching its right edge returns to Live as new steps arrive. **Live** returns to the newest view. It retains up to 10,000 environment steps in the current server session; positions/readings are recorded each step and historical heatmaps use the nearest earlier map refresh. History is cleared on a new training run or test reset and is not a trajectory-resume checkpoint.
 
 Scenario configurations are saved with each run. The application can simulate and train without internet; map tiles and user-triggered place search require a connection. Leaflet itself is bundled locally. The application does not upload scenarios, checkpoints, or experiment data.
 

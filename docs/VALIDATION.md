@@ -138,6 +138,12 @@ Evaluation checks cover saved-model, circular and random policies: pause after a
 
 Interface checks cover per-step playback charts, episode changes, new-playback resets, evaluation sample deduplication, separate training/playback/evaluation histories, and Pause changing to Continue without clearing graphs. Checkpoint compatibility was verified using controlled fixtures. The application server was not launched, and rendered-browser layout remains unverified.
 
+## Training paths and stable history scrubbing: 2026-10-22
+
+All **81 Python tests** and **16 Node interface logic tests** pass, with Ruff, JavaScript syntax and whitespace checks. Training snapshots and history now include the displayed episode's retained UAV trajectories, stopping at the selected timestamp; paths do not depend on Test's distance limit. Checks cover episode separation, live-frame alignment, past-path truncation and unchanged trainer state during history reads.
+
+The history slider spans its own full-width row, with timestamp and Live below it. Its domain stays fixed while dragging; the displayed right edge returns to Live even if steps arrive during the drag, and releasing elsewhere preserves the selected step. Interface checks exercise both cases. Coverage/CNN grid descriptions now state N × N dimensions and explain pre-CNN block averaging. The camera geometry and quality model are unchanged. The application was not launched; rendered-browser layout remains unverified.
+
 ## Remaining research limits
 
 The environment is an analytical simulator with documented assumptions. Aircraft power coefficients and camera templates need calibration. Full-scale heterogeneous multi-UAV learning, statistical repeatability across training seeds, collision avoidance quality and transfer to other areas need separate experiments. Exact trajectory resumption, full dynamics, terrain, NFZs, communication loss, queued recharge planning and station-placement optimization are outside v1. See `IMPLEMENTATION.md` for the executable modeling choices.

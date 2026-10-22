@@ -82,9 +82,9 @@ dialog{background:#16232f;color:#e8eef3;border:1px solid #536776;border-radius:8
 .run-block .toolbar button,.run-block .toolbar a{padding:7px 3px;margin:0;font-size:12px;white-space:nowrap;text-align:center;display:flex;align-items:center;justify-content:center;min-width:0}
 .run-name[aria-invalid="true"]{border-color:#ef867b}
 .simulation-bar select{width:clamp(165px,24vw,420px);max-width:100%}
-.timeline{display:flex;align-items:center;gap:12px;min-width:0}
-.timeline input[type="range"]{flex:1;min-width:60px;width:auto;padding:0;height:20px;accent-color:#8cc6f1;cursor:ew-resize;border:0;background:transparent}
-.timeline output{font-size:12px;color:#a9bac8;font-variant-numeric:tabular-nums;white-space:nowrap}
-.timeline button{padding:5px 9px;font-size:12px}
+.timeline{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px;row-gap:4px;min-width:0}
+.timeline input[type="range"]{grid-column:1/-1;grid-row:1;min-width:0;width:100%;padding:0;height:20px;accent-color:#8cc6f1;cursor:ew-resize;border:0;background:transparent}
+.timeline output{grid-column:1;grid-row:2;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#a9bac8;font-variant-numeric:tabular-nums;white-space:nowrap}
+.timeline button{grid-column:2;grid-row:2;padding:5px 9px;font-size:12px}
 #timing-diagnostics tr.subphase-detail td:first-child{padding-left:22px;color:#95a9b8}
 .evaluation-actions{display:flex;gap:8px}
