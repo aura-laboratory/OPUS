@@ -60,7 +60,30 @@ def test_trails_clip_to_ground_distance_and_interpolate_cutoff():
     assert trails.snapshot(3, 5)[0]['points'] == [[2, 0], [3, 0], [3, 4]]
     assert trails.snapshot(1, 2)[0]['points'] == [[1, 0], [3, 0]]
     assert trails.snapshot(3, 7)[0]['points'] == [[0, 0], [3, 0], [3, 4]]
+    assert trails.snapshot(3, None)[0]['points'] == [[0, 0], [3, 0], [3, 4]]
     assert trails.snapshot(3, 0) == []
+
+
+def test_training_paths_follow_displayed_episode_and_stop_at_selected_timestamp(tmp_path):
+    app = create_app(tmp_path)
+    state = app.state.opus
+    for step, episode, local_step in ((0, 1, 0), (1, 1, 1), (2, 1, 2), (3, 2, 0), (4, 2, 1)):
+        update = {'steps': step, 'sample': {'steps': step, 'episode': episode,
+                  'total_simulated_seconds': step * 5}, 'telemetry': telemetry(local_step)}
+        if step in (0, 2, 3):
+            update.update(frame=frame(local_step), frame_step=step)
+        state.publish(update)
+    with TestClient(app) as client:
+        latest = client.get('/api/training/status').json()
+        assert latest['frame']['episode'] == 2
+        assert latest['frame']['trails'][0]['points'] == [[0, 0]]
+        old = client.get('/api/visualization/history/training?step=1').json()
+        assert old['trails'][0]['points'] == [[0, 0], [1, 0]]
+        recent = client.get('/api/visualization/history/training?step=4').json()
+        assert recent['episode'] == 2
+        assert recent['trails'][0]['points'] == [[0, 0], [1, 0]]
+        assert client.get('/api/training/status').json()['steps'] == 4
+        assert not state.stop.is_set()
 
 
 def test_training_rewind_api_does_not_stop_or_restore_the_trainer(tmp_path):

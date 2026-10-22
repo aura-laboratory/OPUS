@@ -26,7 +26,7 @@ class Trajectories:
             history.append((step, list(uav["geographic"]), xy, distance))
 
     def snapshot(self, step, length_m):
-        if length_m <= 0:
+        if length_m is not None and length_m <= 0:
             return []
         result = []
         for index, history in self.points.items():
@@ -35,7 +35,7 @@ class Trajectories:
                 if recorded > step:
                     continue
                 if target is None:
-                    target = distance - length_m
+                    target = -np.inf if length_m is None else distance - length_m
                 if distance <= target and newer is not None:
                     fraction = (target - distance) / (newer[3] - distance)
                     point = (np.asarray(geographic) + fraction * (np.asarray(newer[1]) - geographic)).tolist()

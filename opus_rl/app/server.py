@@ -84,6 +84,14 @@ class State:
                 live = sample or previous.get("live", {})
                 self.training_history.append(update.get("steps", 0), live.get("episode", 1),
                     live.get("total_simulated_seconds", 0), telemetry, update.get("frame"))
+                if 'frame' in update:
+                    frame_step = update.get('frame_step', update.get('steps', 0))
+                    record = self.training_history.records.get(frame_step)
+                    if record:
+                        # Cache trails at map refreshes, rather than rebuilding them for every poll.
+                        trails = self.training_history.trails[record['episode']]
+                        update['frame'] = {**update['frame'], 'episode': record['episode'],
+                                           'trails': trails.snapshot(frame_step, None)}
             history = previous.get("history", [])
             if "metrics" in update:
                 history = (history + [update["metrics"]])[-1000:]
@@ -149,7 +157,7 @@ def create_app(runs_root=None):
     def health():
         return {"status": "ok", "version": "0.1.0", "local_only": True,
                 "training_algorithm": "ippo",
-                "training_controls_revision": 7,
+                "training_controls_revision": 8,
                 "test_controls_revision": 3,
                 "frontend_revision": frontend_revision(FRONTEND)}
 
@@ -238,7 +246,7 @@ def create_app(runs_root=None):
                 history = state.evaluation_history
             if timeline_id and timeline_id != history.identity:
                 raise HTTPException(409, "The visualization history has changed. Return to Live.")
-            return history.frame(step, trail_length_m if context == "test" else 0)
+            return history.frame(step, trail_length_m if context == "test" else None)
 
     @app.post("/api/simulation/unload")
     def unload_model():
