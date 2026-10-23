@@ -12,6 +12,11 @@ let fitRequest=0, forceMapFit=false;
 const browserTimes={map:{calls:0,total:0,last:0},readings:{calls:0,total:0,last:0},charts:{calls:0,total:0,last:0}};
 function recordBrowser(name,started){if(currentTab!=='training')return;const row=browserTimes[name];row.calls++;row.last=performance.now()-started;row.total+=row.last;}
 const $ = id => document.getElementById(id);
+function formatDuration(seconds, fractionDigits){
+  const value=Math.max(0,Number(seconds)||0),whole=Math.floor(value);
+  const raw=fractionDigits===undefined?value.toLocaleString():value.toFixed(fractionDigits);
+  return `${raw} s (${Math.floor(whole/3600)} h ${Math.floor(whole/60)%60} min ${whole%60} s)`;
+}
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fields = {
   required_gsd_m:['Required GSD','cm/pixel',100], delta_t:['Step time interval ΔT','s'],
@@ -328,7 +333,7 @@ function updateTimeline(){
   slider.disabled=!meta||meta.last_step<=meta.first_step;
   if(!view.dragging){slider.min=meta?.first_step||0;slider.max=meta?.last_step||0;slider.value=view.live?slider.max:Math.max(Number(slider.min),view.step);}
   const seconds=view.live?meta?.last_seconds:view.frame?.history_seconds;
-  $('timeline-time').textContent=`${view.live?'Live':'Past'} · ${Number(seconds||0).toLocaleString()} s total${!view.live&&view.frame?' · ep '+view.frame.episode:''}`;
+  $('timeline-time').textContent=`${view.live?'Live':'Past'} · ${formatDuration(seconds)} total${!view.live&&view.frame?' · ep '+view.frame.episode:''}`;
   $('timeline-live').disabled=view.live;
 }
 async function showHistory(context,step){
@@ -396,7 +401,7 @@ function syncDocks() {
   renderLaunchFields();drawDocks();changed();
 }
 function uavLabel(u){const id='UAV '+((u.inventory_index??u.id)+1);return id+(u.type&&u.type!==id?' · '+u.type:'');}
-function applyTelemetry(frame){const started=performance.now();const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=frame.info.simulated_seconds.toLocaleString()+' s';
+function applyTelemetry(frame){const started=performance.now();const c=frame.info.coverage;$('safety-metrics').textContent=`${frame.info.energy_Wh.reduce((a,b)=>a+b,0).toFixed(3)} Wh this step · ${frame.info.crashed_uavs} crashed · ${frame.info.collision_pairs.length} collision pairs`;$('metric-mean').textContent=c.mean.toFixed(3);$('metric-fairness').textContent=c.fairness.toFixed(3);$('metric-reward').textContent=Number(frame.info.reward||0).toFixed(3);$('simulation-time').textContent=formatDuration(frame.info.simulated_seconds);
   $('reward-label').textContent=frame.info.reward_mode==='individual'?'Mean UAV reward':'Team reward';
   $('metric-reward').parentElement.dataset.help=frame.info.reward_mode==='individual'?fieldHelp.live_reward:'Team reward for the latest step, using this legacy MAPPO model’s original reward definition. This is not a cumulative episode return.';
   const fleet=$('fleet-status'),key=frame.uavs.map(u=>u.inventory_index??u.id).join(',');
@@ -685,8 +690,8 @@ function renderEvaluation(){
   $('evaluation-fill').style.width=(job.status==='completed'?100:Math.min(100,100*done/total))+'%';
   const source=job.run_id?(selectedRun?.run_id===job.run_id?selectedRun.name:job.run_id):job.policy==='random'?'Random actions':'Circular baseline';
   const stateLabel={paused:'Paused',pausing:'Pausing…',stopping:'Stopping evaluation'}[job.status]||'Evaluating';
-  $('evaluation-progress').textContent=busy?`${stateLabel} · ${source} · episode ${job.episode||1} / ${job.episodes||1} · step ${job.step||0}${job.episode_length?' / '+job.episode_length:''} · ${Number(job.elapsed_seconds||0).toFixed(1)} s`:
-    job.status==='failed'?job.error:`${job.status==='stopped'?'Stopped':'Completed'} · ${source} · ${job.result?.episodes||0} episodes · ${Number(job.elapsed_seconds||0).toFixed(1)} s`;
+  $('evaluation-progress').textContent=busy?`${stateLabel} · ${source} · episode ${job.episode||1} / ${job.episodes||1} · step ${job.step||0}${job.episode_length?' / '+job.episode_length:''} · ${formatDuration(job.elapsed_seconds,1)}`:
+    job.status==='failed'?job.error:`${job.status==='stopped'?'Stopped':'Completed'} · ${source} · ${job.result?.episodes||0} episodes · ${formatDuration(job.elapsed_seconds,1)}`;
   if(testPlotSource==='evaluation'&&job.frame){
     viewFrames.test={...job.frame,timeline:job.timeline||job.frame.timeline,evaluation_preview:true};simulationReady=false;
     if(currentTab==='test'&&timelineViews.test.live){

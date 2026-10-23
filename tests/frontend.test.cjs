@@ -37,6 +37,14 @@ function harness(){
   return {nodes,context,fits,polylines,modelOption,run:code=>vm.runInContext(code,context),flush(){while(frames.length)frames.shift()();}};
 }
 
+test('Durations retain seconds and show hours, minutes and seconds across boundaries',()=>{
+  const h=harness();
+  for(const [seconds,clock] of [[0,'0 h 0 min 0 s'],[59,'0 h 0 min 59 s'],[60,'0 h 1 min 0 s'],[3600,'1 h 0 min 0 s'],[3725,'1 h 2 min 5 s'],[90061,'25 h 1 min 1 s']]){
+    assert.equal(h.run(`formatDuration(${seconds})`),`${seconds.toLocaleString()} s (${clock})`);
+  }
+  assert.equal(h.run('formatDuration(60.5,1)'),'60.5 s (0 h 1 min 0 s)');
+});
+
 test('Mission shows setup only; Test owns playback and Training retains metrics',async()=>{
   const h=harness();
   h.run('setTab("mission")');
