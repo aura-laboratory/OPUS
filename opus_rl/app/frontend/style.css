@@ -57,6 +57,11 @@ button[aria-pressed]:active{box-shadow:inset 0 3px 6px #08120d88;transform:trans
 .reward-equation{border-top:1px solid #304857;margin-top:12px;padding-top:10px;overflow-x:auto}
 .reward-equation math{font-size:15px;margin:8px 0;color:#eed2a9}
 .reward-equation p{font-size:10px;line-height:1.6;margin:10px 0 0}
+.reward-terms{margin-top:12px}
+.reward-terms>details{border-top:1px solid #304857;padding:8px 0}
+.reward-terms>details>summary{margin:0;font-size:12px}
+.reward-terms summary math{display:inline;font-size:14px;margin:0;color:inherit}
+.reward-terms p{color:#a9bac8;margin:6px 0 0;font-size:11px}
 #training-diagnostics>p{margin:10px 0 0}
 .simulation-bar .replay-controls{display:flex;align-items:center;gap:10px;margin:0;min-width:0;flex-wrap:wrap;justify-content:flex-end}
 .simulation-bar #episode-counter{min-width:0;margin-right:0;font-variant-numeric:tabular-nums}

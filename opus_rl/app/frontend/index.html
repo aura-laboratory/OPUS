@@ -32,7 +32,7 @@
     <div class="group"><h2>Training</h2><div id="training-fields" class="fields"></div></div>
     <details class="group"><summary>IPPO</summary><div id="ppo-fields" class="fields"></div></details>
     <details class="group"><summary>Reward weights</summary><div id="reward-fields" class="fields"></div>
-      <div class="reward-equation" data-help="C′ is the next coverage map. C′₋ᵢ keeps the same history and other UAV captures, omitting only UAV i’s current capture. The coefficients below follow the fields above; negative contributions are retained.">
+      <div class="reward-equation">
         <math display="block" aria-label="Coverage score"><mrow>
           <mi>F</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>=</mo>
           <mn data-reward-weight="mean_weight">0.5</mn><mi>μ</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>+</mo>
@@ -43,7 +43,37 @@
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="energy_weight">0.2</mn><msub><mi>e</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="projection_weight">0.1</mn><msub><mi>p</mi><mi>i</mi></msub></mtd></mtr>
           <mtr><mtd></mtd><mtd><mo>−</mo><mn data-reward-weight="collision_weight">0.3</mn><msub><mi>c</mi><mi>i</mi></msub><mo>−</mo><mn data-reward-weight="crash_weight">0.4</mn><msub><mi>x</mi><mi>i</mi></msub></mtd></mtr>
         </mtable></math>
-        <p class="muted">μ: mean · J: fairness<br>e: energy · p: correction · c: collision · x: crash</p>
+        <div class="reward-terms">
+          <details>
+            <summary><math><msub><mi>ΔF</mi><mi>i</mi></msub></math> · Coverage</summary>
+            <math display="block" aria-label="Individual coverage contribution"><mrow><msub><mi>ΔF</mi><mi>i</mi></msub><mo>=</mo><mi>F</mi><mo>(</mo><msup><mi>C</mi><mo>′</mo></msup><mo>)</mo><mo>−</mo><mi>F</mi><mo>(</mo><msubsup><mi>C</mi><mrow><mo>−</mo><mi>i</mi></mrow><mo>′</mo></msubsup><mo>)</mo></mrow></math>
+            <math display="block" aria-label="Coverage update"><mrow><msubsup><mi>C</mi><mi>c</mi><mo>′</mo></msubsup><mo>=</mo><mi>λ</mi><msub><mi>C</mi><mi>c</mi></msub><mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><mi>λ</mi><mo>)</mo><munder><mo>max</mo><mi>j</mi></munder><msub><mi>q</mi><mrow><mi>j</mi><mi>c</mi></mrow></msub></mrow></math>
+            <p>C′₋ᵢ uses the same update, omitting only UAV i’s current capture. History and other UAVs stay the same. No capture: q = 0.</p>
+            <math display="block" aria-label="Mean coverage"><mrow><mi>μ</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>=</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mrow><mi>c</mi><mo>∈</mo><mi>A</mi></mrow></munder><msub><mi>C</mi><mi>c</mi></msub></mrow></math>
+            <math display="block" aria-label="Jain spatial fairness"><mrow><mi>J</mi><mo>(</mo><mi>C</mi><mo>)</mo><mo>=</mo><mfrac><msup><mrow><mo>(</mo><munder><mo>∑</mo><mrow><mi>c</mi><mo>∈</mo><mi>A</mi></mrow></munder><msub><mi>C</mi><mi>c</mi></msub><mo>)</mo></mrow><mn>2</mn></msup><mrow><mi>N</mi><munder><mo>∑</mo><mrow><mi>c</mi><mo>∈</mo><mi>A</mi></mrow></munder><msubsup><mi>C</mi><mi>c</mi><mn>2</mn></msubsup><mo>+</mo><mi>ε</mi></mrow></mfrac></mrow></math>
+            <p>A: AoI cells; N: their count. C: retained quality; q: current camera quality; λ: coverage memory; ε = 10⁻¹². μ rewards quality, J rewards uniformity. ΔFᵢ can be negative if fairness falls.</p>
+          </details>
+          <details>
+            <summary><math><msub><mi>e</mi><mi>i</mi></msub></math> · Energy</summary>
+            <math display="block" aria-label="Normalized step energy"><mrow><msub><mi>e</mi><mi>i</mi></msub><mo>=</mo><mi>min</mi><mo>(</mo><mn>1</mn><mo>,</mo><mfrac><msub><mi>E</mi><mi>i</mi></msub><mrow><mn>2</mn><msub><mi>P</mi><mrow><mn>0</mn><mo>,</mo><mi>i</mi></mrow></msub><mi>ΔT</mi><mo>/</mo><mn>3600</mn></mrow></mfrac><mo>)</mo></mrow></math>
+            <p>Eᵢ: energy used this step (Wh), including automatic flight. P₀,ᵢ: baseline airborne power (W); ΔT: step seconds. 1 means at least twice the baseline step energy.</p>
+          </details>
+          <details>
+            <summary><math><msub><mi>p</mi><mi>i</mi></msub></math> · Action correction</summary>
+            <math display="block" aria-label="Normalized action correction"><mrow><msub><mi>p</mi><mi>i</mi></msub><mo>=</mo><msubsup><mrow><mo>[</mo><mfrac><mrow><mo>‖</mo><msub><mi>a</mi><mi>i</mi></msub><mo>−</mo><msub><mover><mi>a</mi><mo>~</mo></mover><mi>i</mi></msub><msub><mo>‖</mo><mn>2</mn></msub></mrow><mrow><mn>2</mn><msqrt><mn>5</mn></msqrt></mrow></mfrac><mo>]</mo></mrow><mn>0</mn><mn>1</mn></msubsup></mrow></math>
+            <p>aᵢ: proposed action; ãᵢ: feasible action. Euclidean distance across 5 normalized components (x, y, z, yaw, gimbal), clipped to [0, 1]. Zero during automatic control.</p>
+          </details>
+          <details>
+            <summary><math><msub><mi>c</mi><mi>i</mi></msub></math> · Collision</summary>
+            <math display="block" aria-label="Collision indicator"><mrow><msub><mi>c</mi><mi>i</mi></msub><mo>=</mo><mn>𝟙</mn><mo>[</mo><mi>∃</mi><mi>j</mi><mo>≠</mo><mi>i</mi><mo>:</mo><msub><mi>d</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&lt;</mo><msub><mi>R</mi><mi>i</mi></msub><mo>+</mo><msub><mi>R</mi><mi>j</mi></msub><mo>]</mo></mrow></math>
+            <p>1 if UAV i collides this step; otherwise 0. dᵢⱼ: minimum separation along this step’s trajectories; R: effective UAV radius. Both UAVs are penalized.</p>
+          </details>
+          <details>
+            <summary><math><msub><mi>x</mi><mi>i</mi></msub></math> · Crash</summary>
+            <math display="block" aria-label="Persistent crash indicator"><mrow><msub><mi>x</mi><mi>i</mi></msub><mo>=</mo><mn>𝟙</mn><mo>[</mo><mtext>UAV i is crashed</mtext><mo>]</mo></mrow></math>
+            <p>1 from a collision or battery depletion onward; otherwise 0. Penalized every remaining step until the episode ends.</p>
+          </details>
+        </div>
       </div>
     </details>
     <div id="training-progress" class="group"><h2>Progress</h2><div class="progress"><div id="progress-fill"></div></div><p id="progress-text" class="muted">No experiment running.</p>
